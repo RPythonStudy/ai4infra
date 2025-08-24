@@ -1,0 +1,20 @@
+
+# config/postgres.yml
+#
+# 이 파일은 운영체제(OS) 및 ai4infra 개발폴더와 무관하게 사용할 수 있도록 설계되었습니다.
+# 경로(install_dir, backup_dir 등)와 포트(port)는 사용자가 직접 이 파일에서 설정합니다.
+# superuser와 superpassword만 .env에서 관리하며, 민감정보는 코드/설정파일에 직접 노출하지 않습니다.
+#
+# AI Agent 참고:
+# - superuser, superpassword는 반드시 .env에서 값을 로딩하세요.
+# - 나머지 경로/포트 등은 이 파일에서 직접 설정합니다.
+# - 경로가 비어있거나 기본값이 필요하면, 코드에서 자동으로 대체하세요.
+# - 윈도우/맥 환경에서는 경로 구분자 및 권한 이슈에 유의하세요.
+# - 예시 경로는 개발자 기준이며, 실제 운영환경에 맞게 변경 가능합니다.
+
+postgres:
+  PG_INSTALL_DIR: /opt/ai4infra/postgresql         # 실제 설치 경로
+  PG_DATA_DIR: /opt/ai4infra/postgresql/data       # 데이터 디렉토리
+  PG_BACKUP_DIR: /opt/ai4infra/backup/postgresql   # 백업 경로
+  PG_PORT: 5432                                    # DB 포트
+

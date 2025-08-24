@@ -47,4 +47,4 @@ check:
 backup:
 	python scripts/setup/backup.py
 
-# include Makefile_project
+include Makefile_project

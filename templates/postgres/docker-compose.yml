@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:16.3-alpine
+    container_name: postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ${PG_DATA_DIR:-/opt/ai4infra/postgresql/data}:/var/lib/postgresql/data
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    networks:
+      - ai4infra
+networks:
+  ai4infra:
+    driver: bridge
+    name: ai4infra
