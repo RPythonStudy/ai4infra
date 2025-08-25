@@ -1,0 +1,205 @@
+dn: uid=rmdirector,ou=users,ou=ai4rm,dc=rpython,dc=study
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: rmdirector
+sn: 프로젝트책임자
+cn: 프로젝트책임자
+displayName: 프로젝트책임자
+userPassword: rmdirector_ldap
+gidNumber: 2000
+uidNumber: 2000
+homeDirectory: /home/rmdirector
+loginShell: /bin/bash
+mail: rmdirector@rpython.study
+title: 프로젝트 책임자
+description: Vault: breakglass / LDAP: *
+
+dn: uid=rmsecurity,ou=users,ou=ai4rm,dc=rpython,dc=study
+objectClass: inetOrgPerson
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: rmsecurity
+sn: 정보보안책임자
+cn: 정보보안책임자
+displayName: 정보보안책임자
+userPassword: rmsecurity_ldap
+gidNumber: 2001
+uidNumber: 2001
+homeDirectory: /home/rmsecurity
+loginShell: /bin/bash
+mail: rmsecurity@rpython.study
+title: 정보보안책임자
+description: Vault: root / LDAP: admin
+
+dn: uid=rmsec,ou=users,ou=ai4rm,dc=rpython,dc=study
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: rmsec
+sn: 정보보안담당
+cn: 정보보안담당
+displayName: 정보보안담당
+userPassword: rmsec_ldap
+gidNumber: 2002
+uidNumber: 2002
+homeDirectory: /home/rmsec
+loginShell: /bin/bash
+mail: rmsec@rpython.study
+title: 정보보안담당
+description: Vault: operator / LDAP: operator
+
+dn: uid=rmpseudo,ou=users,ou=ai4rm,dc=rpython,dc=study
+objectClass: shadowAccount
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: rmpseudo
+sn: 가명화담당
+cn: 가명화담당
+displayName: 가명화담당
+userPassword: rmpseudo_ldap
+gidNumber: 2003
+uidNumber: 2003
+homeDirectory: /home/rmpseudo
+loginShell: /bin/bash
+mail: rmpseudo@rpython.study
+title: 가명화담당
+description: Vault: pseudo / LDAP: *
+
+dn: uid=rminfra,ou=users,ou=ai4rm,dc=rpython,dc=study
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: rminfra
+sn: 서버담당
+cn: 서버담당
+displayName: 서버담당
+userPassword: rminfra_ldap
+gidNumber: 2004
+uidNumber: 2004
+homeDirectory: /home/rminfra
+loginShell: /bin/bash
+mail: rminfra@rpython.study
+title: 서버담당
+description: Vault: * / LDAP: *
+
+dn: uid=rmqc,ou=users,ou=ai4rm,dc=rpython,dc=study
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: rmqc
+sn: 데이터품질관리책임자
+cn: 데이터품질관리책임자
+displayName: 데이터품질관리책임자
+userPassword: rmqc_ldap
+gidNumber: 2005
+uidNumber: 2005
+homeDirectory: /home/rmqc
+loginShell: /bin/bash
+mail: rmqc@rpython.study
+title: 데이터품질관리책임자
+description: Vault: * / LDAP: *
+
+dn: uid=rmverify,ou=users,ou=ai4rm,dc=rpython,dc=study
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: rmverify
+sn: 메타데이터 검증담당
+cn: 메타데이터 검증담당
+displayName: 메타데이터 검증담당
+userPassword: rmverify_ldap
+gidNumber: 2006
+uidNumber: 2006
+homeDirectory: /home/rmverify
+loginShell: /bin/bash
+mail: rmverify@rpython.study
+title: 메타데이터 검증담당
+description: Vault: * / LDAP: *
+
+dn: uid=rmdb,ou=users,ou=ai4rm,dc=rpython,dc=study
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: rmdb
+sn: 가명화DB 운영담당
+cn: 가명화DB 운영담당
+displayName: 가명화DB 운영담당
+userPassword: rmdb_ldap
+gidNumber: 2007
+uidNumber: 2007
+homeDirectory: /home/rmdb
+loginShell: /bin/bash
+mail: rmdb@rpython.study
+title: 가명화DB 운영담당
+description: Vault: * / LDAP: *
+
+dn: uid=rmsupport,ou=users,ou=ai4rm,dc=rpython,dc=study
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: rmsupport
+sn: 연구지원책임자
+cn: 연구지원책임자
+displayName: 연구지원책임자
+userPassword: rmsupport_ldap
+gidNumber: 2008
+uidNumber: 2008
+homeDirectory: /home/rmsupport
+loginShell: /bin/bash
+mail: rmsupport@rpython.study
+title: 연구지원책임자
+description: Vault: * / LDAP: *
+
+dn: uid=rmcurator,ou=users,ou=ai4rm,dc=rpython,dc=study
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: rmcurator
+sn: AI연구 큐레이터
+cn: AI연구 큐레이터
+displayName: AI연구 큐레이터
+userPassword: rmcurator_ldap
+gidNumber: 2009
+uidNumber: 2009
+homeDirectory: /home/rmcurator
+loginShell: /bin/bash
+mail: rmcurator@rpython.study
+title: AI연구 큐레이터
+description: Vault: * / LDAP: *
+
+dn: uid=nmdose,ou=users,ou=ai4rm,dc=rpython,dc=study
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: nmdose
+sn: 영상검사선량관리담당        
+cn: 영상검사선량관리담당
+displayName: 영상선량관리담당
+userPassword: nmdose_ldap
+gidNumber: 2010
+uidNumber: 2010
+homeDirectory: /home/nmdose
+loginShell: /bin/bash
+mail: nmdose@rpython.study
+title: 영상검사선량관리담당
+description: Vault: * / LDAP: *
+
+dn: uid=rmdrb,ou=users,ou=ai4rm,dc=rpython,dc=study
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: rmdrb
+sn: 개인정보보호감사
+cn: 개인정보보호감사
+displayName: 개인정보보호감사
+userPassword: rmdrb_ldap
+gidNumber: 2011
+uidNumber: 2011
+homeDirectory: /home/rmdrb
+loginShell: /bin/bash
+mail: rmdrb@rpython.study
+title: 개인정보보호감사
+description: Vault: audit / LDAP: 감사권한

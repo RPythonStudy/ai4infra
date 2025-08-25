@@ -1,0 +1,22 @@
+services:
+  openldap:
+    image: osixia/openldap:latest
+    container_name: openldap
+    restart: always
+    mem_limit: "640m"
+    ports:
+      - "389:389"
+      - "636:636"
+    environment:
+      TZ: Asia/Seoul
+    volumes:
+      - ./data:/var/lib/ldap
+      - ./config:/etc/ldap/slapd.d
+      - /etc/localtime:/etc/localtime:ro
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+    networks:
+      - backend
+  
+networks:
+  backend:
+    driver: bridge
