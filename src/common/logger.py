@@ -1,8 +1,7 @@
-# {PROJECT_ROOT}/src/common/logger.py
 """
-AI-최적화 로깅 유틸리티
-- 2025-08-12 (rev.AI-3)
-- 특징:
+파일명: src/common/logger.py
+목적: 로깅 프레임워크 제공
+설명:
   - .env + logging.yml 기반 동적 설정
   - YAML 전역(키/값) 환경변수 치환: ${PROJECT_NAME}, ${LOG_PATH}...
   - 파일 핸들러의 경로/권한 검증(자동 생성 금지)
@@ -10,7 +9,10 @@ AI-최적화 로깅 유틸리티
   - 프로젝트 로거 자동 보장(없으면 생성)
   - audit 로거의 stdout 출력 금지 보장(정책 위반 시 예외)
   - get_logger, log_info 등 래퍼 제공
+변경이력:
+  - 2025-08-12: 새로 생성 (BenKorea)
 """
+
 import os
 import re
 import socket

@@ -1,10 +1,19 @@
+###
+# 파일명: config/logging.yml
+# 목적: 로깅 프레임워크에 대한 정책 설정
+# 기능: 
+#  - (참고) 경로와 프로젝트명은 .env에서 설정합니다.
+#  - PROJECT_NAME=myproject
+#  - LOG_PATH=/var/log/myproject/logs
+#  - (로그 파일명은 핸들러에서 /service.log, /audit.log 등으로 조합)
+# 변경이력
+#  - 2025-09-01: 최초 생성 (BenKorea)
+###
+
 version: 1
 disable_existing_loggers: false
 
-# (참고) 경로와 프로젝트명은 .env에서 설정합니다.
-#   PROJECT_NAME=myproject
-#   LOG_PATH=/var/log/myproject/logs
-#   (로그 파일명은 핸들러에서 /service.log, /audit.log 등으로 조합)
+
 
 formatters:
   simple:

@@ -1,4 +1,14 @@
-# common/database.py - 데이터베이스 연결 통합 관리
+"""
+파일명: src/common/database.py
+목적: 데이터베이스 연결 및 쿼리 실행 담당
+기능: 
+- PostgreSQL 데이터베이스에 연결
+- SQL 쿼리 실행 및 결과 반환
+- 에러 발생 시 로깅
+변경이력:
+  - 2025-09-01: 최초 생성 (BenKorea)
+"""
+
 import psycopg2
 import os
 from common.logger import log_error, log_debug
