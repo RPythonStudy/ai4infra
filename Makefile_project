@@ -6,3 +6,12 @@ postgres-backup:
 
 postgres-restore:
 	sudo $(shell which python) scripts/postgres/manage.py restore
+
+infra-info:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py info
+
+infra-ls:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py ls
+
+infra-status:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py status

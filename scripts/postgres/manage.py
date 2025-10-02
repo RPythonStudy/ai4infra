@@ -1,9 +1,26 @@
-from dotenv import load_dotenv
+"""
+파일명: scripts/postgres/manage.py
+목적: posggres 서비스 관리 도구
+기능: 
+- 설치 (install)
+- 백업 (backup)
+- 복원 (restore)
+변경이력:
+  - 2025-10-02: 최초 구현 (BenKorea)
+"""
+
 import os
+import shutil
+import subprocess
+import sys
 import yaml
+from datetime import datetime
+
 import typer
 from dotenv import load_dotenv
-from common.logger import log_info
+
+from common.load_config import load_config
+from common.logger import log_error, log_info
 
 app = typer.Typer()
 
@@ -17,7 +34,6 @@ def load_config():
 
 @app.command("install")
 def install():
-    from common.logger import log_info, log_error
     with open("config/postgres.yml") as f:
         postgres_cfg = yaml.safe_load(f).get("postgres", {})
         install_dir = postgres_cfg.get("PG_INSTALL_DIR")
@@ -25,17 +41,11 @@ def install():
         backup_dir = postgres_cfg.get("PG_BACKUP_DIR")
         port = postgres_cfg.get("PG_PORT")
     log_info(f"install_dir: {install_dir}")
-
-    import shutil
-    import subprocess
-    from common.logger import log_info, log_error
     template_dir = "templates/postgres"
     # 0. 기존 data 폴더 백업 및 복원
     if data_dir and os.path.exists(data_dir):
         log_info(f"Data directory exists: {data_dir}. Running backup and restore...")
         # 백업
-        import subprocess
-        import sys
         subprocess.run([
             sys.executable, os.path.abspath(__file__), "backup"
         ], check=True)
@@ -101,19 +111,13 @@ def install():
     # 설치 후 restore 실행
     if data_dir and os.path.exists(data_dir):
         log_info(f"Running restore for {data_dir}...")
-        import sys
+
         subprocess.run([
             sys.executable, os.path.abspath(__file__), "restore"
         ], check=True)
 
 @app.command("backup")
 def backup():
-    import os
-    import shutil
-    import datetime
-    import yaml
-    from common.logger import log_info, log_error
-
     # config에서 경로 로딩
     with open("config/postgres.yml") as f:
         postgres_cfg = yaml.safe_load(f).get("postgres", {})
@@ -122,7 +126,6 @@ def backup():
         container_name = postgres_cfg.get("container_name", "postgres")
 
     # 1. 컨테이너 중지
-    import subprocess
     try:
         subprocess.run(["sudo", "docker", "stop", container_name], check=True)
         log_info(f"Stopped container: {container_name}")
@@ -155,12 +158,6 @@ def backup():
 
 @app.command("restore")
 def restore():
-    import os
-    import shutil
-    import yaml
-    import subprocess
-    from common.logger import log_info, log_error
-
     # config에서 경로 로딩
     with open("config/postgres.yml") as f:
         postgres_cfg = yaml.safe_load(f).get("postgres", {})
