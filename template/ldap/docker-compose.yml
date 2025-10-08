@@ -1,0 +1,23 @@
+services:
+  ldap:
+    image: osixia/openldap:latest
+    container_name: ai4infra-ldap
+    restart: unless-stopped
+    ports:
+      - "${LDAP_PORT:-389}:389"
+      - "${LDAP_SSL_PORT:-636}:636"
+    environment:
+      - LDAP_ORGANISATION=${LDAP_ORGANISATION:-AI4INFRA}
+      - LDAP_DOMAIN=${LDAP_DOMAIN:-ai4infra.local}
+      - LDAP_ADMIN_PASSWORD=${LDAP_ADMIN_PASSWORD:-admin123!}
+      - TZ=Asia/Seoul
+    volumes:
+      - ${LDAP_DATA_DIR:-/opt/ai4infra/ldap/data}:/var/lib/ldap
+      - ${LDAP_CONFIG_DIR:-/opt/ai4infra/ldap/config}:/etc/ldap/slapd.d
+    networks:
+      - ai4infra
+
+networks:
+  ai4infra:
+    external: true
+    name: ai4infra

@@ -1,10 +1,12 @@
 services:
   postgres:
     image: postgres:16.3-alpine
-    container_name: postgres
+    container_name: ai4infra-postgres
     restart: unless-stopped
-    env_file:
-      - .env
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ai4infra123!}
+      - POSTGRES_DB=${POSTGRES_DB:-ai4infra}
     volumes:
       - ${PG_DATA_DIR:-/opt/ai4infra/postgresql/data}:/var/lib/postgresql/data
     ports:
@@ -13,5 +15,5 @@ services:
       - ai4infra
 networks:
   ai4infra:
-    driver: bridge
+    external: true
     name: ai4infra

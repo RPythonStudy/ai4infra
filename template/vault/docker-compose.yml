@@ -1,0 +1,30 @@
+services:
+  vault:
+    image: hashicorp/vault:1.20.4
+    container_name: ai4infra-vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    mem_limit: 640m
+    ports:
+      - "${VAULT_PORT:-8200}:8200"
+    environment:
+      - VAULT_API_ADDR=https://vault:8200
+      - VAULT_ADDR=https://localhost:8200
+    command: ["vault", "server", "-config=/vault/config/vault.hcl"]
+    volumes:
+      - ${VAULT_FILE_DIR:-/opt/ai4infra/vault/file}:/vault/file
+      - ${VAULT_CERTS_DIR:-/opt/ai4infra/vault/certs}:/vault/certs
+      - ${VAULT_CONFIG_DIR:-/opt/ai4infra/vault/config}:/vault/config
+    networks:
+      - ai4infra
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://localhost:8200/v1/sys/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  ai4infra:
+    external: true
+    name: ai4infra
