@@ -8,19 +8,24 @@
   - 2025-10-04: 최초 구현 (BenKorea)
 """
 
+# Standard library imports
 import os
 import re
 import subprocess
 import sys
+from datetime import datetime
+from pathlib import Path
 from typing import List
 
+# Third-party imports
 import typer
-from datetime import datetime
-
 from dotenv import load_dotenv
+
+# Local imports
 from common.load_config import load_config
 from common.logger import log_debug, log_error, log_info
-from generate_certificates import generate_certificates
+from utils.container_manager import docker_stop_function, stop_container, backup_data
+from utils.generate_certificates import generate_certificates
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
@@ -28,28 +33,10 @@ BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
 
 app = typer.Typer(help="AI4INFRA 서비스 관리")
 
-# 서비스 목록 (설정에서 로드하거나 하드코딩)
-# SERVICES = ['all']
-SERVICES = ['postgres', 'vault', 'elk', 'bitwarden', 'ldap']
+SERVICES = ['postgres', 'vault', 'elk', 'ldap']
 
 
-def stop_container(service: str):
-    """단일 서비스 컨테이너 중지 - 극단적 간결 버전"""
-    # 실행 중인 컨테이너 찾아서 중지 (sudo 사용)
-    result = subprocess.run([
-        'sudo', 'docker', 'ps', '--filter', f'name=ai4infra-{service}', 
-        '--format', '{{.Names}}'
-    ], capture_output=True, text=True)
-    
-    containers = [c for c in result.stdout.strip().split('\n') if c]
-    for container in containers:
-        log_debug(f"[stop_container] {container} 컨테이너 중지 중...")
-        subprocess.run(['sudo', 'docker', 'stop', container])
-    
-    if containers:
-        log_info(f"[stop_container] {service} → 컨테이너 중지됨: {', '.join(containers)}")
-    else:
-        log_info(f"[stop_container] {service} 실행 중인 컨테이너 없음")
+
 
 
 def ensure_network():
@@ -127,27 +114,7 @@ def create_directory(service: str):
 
 
 
-def backup_data(service: str) -> str:
-    """서비스 데이터 백업 - 극단적 간결 버전"""
-    data_dir = f"{BASE_DIR}/{service}/data"
-    backup_dir = f"{BASE_DIR}/{service}/backups"
-    
-    # 백업할 데이터가 없으면 건너뛰기
-    if not os.path.exists(data_dir):
-        log_info(f"[backup_data] {service} 백업할 데이터 없음: {data_dir}")
-        return ""
-    
-    # 백업 파일 경로
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_file = f"{backup_dir}/backup_{timestamp}.tar.gz"
-    
-    # 백업 실행
-    subprocess.run(['sudo', 'mkdir', '-p', backup_dir])
-    subprocess.run(['sudo', 'tar', '-czf', backup_file, '-C', f"{BASE_DIR}/{service}", 'data'])
-    subprocess.run(['sudo', 'chown', f"{os.getenv('USER')}:{os.getenv('USER')}", backup_file])
 
-    log_info(f"[backup_data] {service} 백업: {backup_file}")
-    return backup_file
 
 
 def replace_env_vars(content: str, service: str) -> str:
@@ -220,7 +187,11 @@ def install(service: str = typer.Argument("all", help="설치할 서비스 이�
         log_info(f"[install] {svc_name} 설치 시작")
         
         # 1. 컨테이너 중지
-        stop_container(svc_name)
+        stop_container(
+            service=svc_name,
+            search_pattern=f'ai4infra-{svc_name}',
+            stop_function=docker_stop_function
+        )
         
         # 2. 기존 데이터 백업
         backup_file = backup_data(svc_name)
@@ -278,7 +249,11 @@ def restore(
         return
     
     # 2. 컨테이너 중지
-    stop_container(service)
+    stop_container(
+        service=service,
+        search_pattern=f'ai4infra-{service}',
+        stop_function=docker_stop_function
+    )
     
     # 3. 기존 데이터 삭제
     data_dir = f"{BASE_DIR}/{service}/data"
