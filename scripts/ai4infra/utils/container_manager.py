@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
 파일명: scripts/ai4infra/utils/container_manager.py
-목적: 컨테이너 중지 공통 로직
+목적: 각 컨테이너를 설치/백업/복구에 필요한 기초 함수들을 정의하는 파일을 분리하여 ai4infra-cli.py의 가독성과 재활용을 높이기 위함.
+설명:
+
+변경이력:
+  - 2025-10-30: 최초 구현 (BenKorea)
 """
 
 import subprocess
