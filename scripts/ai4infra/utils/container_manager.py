@@ -33,11 +33,37 @@ def stop_container(
     """
     서비스 컨테이너 중지 로직
     
+    컨테이너 검색 → 중지 실행 → 결과 검증의 공통 워크플로우를 제공하며,
+    실제 중지 방법은 서비스별로 다른 stop_function을 통해 위임합니다.
+    
     Args:
         service: 서비스 이름 (로깅용)
-        search_pattern: 컨테이너 검색 패턴
+        search_pattern: 컨테이너 검색 패턴 (docker ps --filter name= 에 사용)
         stop_function: 실제 중지를 수행하는 함수
+            - docker_stop_function: 일반적인 docker stop 명령 사용
+            - bitwarden_stop_function: bitwarden.sh stop 스크립트 사용
+            - 기타 서비스별 맞춤 중지 로직 가능
         verify_pattern: 검증용 패턴 (없으면 search_pattern 사용)
+    
+    Examples:
+        # 일반 Docker 컨테이너 중지
+        stop_container(
+            service="postgres",
+            search_pattern="ai4infra-postgres", 
+            stop_function=docker_stop_function
+        )
+        
+        # Bitwarden 전용 스크립트 사용
+        stop_container(
+            service="bitwarden",
+            search_pattern="bitwarden",
+            stop_function=bitwarden_stop_function("/opt/bitwarden")
+        )
+    
+    Note:
+        이 함수는 전략 패턴(Strategy Pattern)을 구현하여 서비스별로 다른 
+        중지 메커니즘을 지원합니다. 공통 로직(검색, 검증, 로깅)은 여기서 
+        처리하고, 실제 중지 방법만 stop_function으로 분리했습니다.
     """
     # 1. 컨테이너 검색
     result = subprocess.run([
@@ -45,9 +71,9 @@ def stop_container(
         '--format', '{{.Names}}'
     ], capture_output=True, text=True)
 
-    log_debug(f"[stop_container] result={result}")
-    
-    containers = [c for c in result.stdout.strip().split('\n') if c]
+    log_debug(f"[stop_container] result.stdout={result.stdout}")
+
+    containers = [container for container in result.stdout.strip().split('\n') if container]
     
     # 2. 빈 결과 처리
     if not containers:
@@ -67,7 +93,7 @@ def stop_container(
         '--format', '{{.Names}}'
     ], capture_output=True, text=True)
     
-    remaining_containers = [c for c in verify_result.stdout.strip().split('\n') if c]
+    remaining_containers = [container for container in verify_result.stdout.strip().split('\n') if container]
     
     # 6. 성공/실패 로깅
     if not remaining_containers:
