@@ -44,6 +44,8 @@ def stop_container(
         'sudo', 'docker', 'ps', '--filter', f'name={search_pattern}',
         '--format', '{{.Names}}'
     ], capture_output=True, text=True)
+
+    log_debug(f"[stop_container] result={result}")
     
     containers = [c for c in result.stdout.strip().split('\n') if c]
     
