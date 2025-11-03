@@ -22,9 +22,8 @@ import typer
 from dotenv import load_dotenv
 
 # Local imports
-from common.load_config import load_config
 from common.logger import log_debug, log_error, log_info
-from utils.container_manager import docker_stop_function, stop_container, backup_data
+from utils.container_manager import docker_stop_function, stop_container, create_bitwarden_user, create_directory, replace_env_vars, copy_template, backup_data
 from utils.generate_certificates import generate_certificates
 
 load_dotenv()
@@ -32,12 +31,7 @@ PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
 
 app = typer.Typer(help="AI4INFRA 서비스 관리")
-
 SERVICES = ['postgres', 'vault', 'elk', 'ldap']
-
-
-
-
 
 def ensure_network():
     """ai4infra 네트워크 생성 - 극단적 간결 버전"""
@@ -49,7 +43,6 @@ def ensure_network():
         log_info("[ensure_network] ai4infra 네트워크 생성됨")
     else:
         log_debug("[ensure_network] ai4infra 네트워크 이미 존재")
-
 
 def start_container(service: str):
     """단일 서비스 컨테이너 시작 - 디버깅 강화 버전"""
@@ -96,96 +89,23 @@ def start_container(service: str):
         log_error(f"[start_container] 출력 내용: {result.stdout}")
 
 
-def create_directory(service: str):
-    """단일 서비스 디렉터리 생성 - 극단적 간결 버전"""
-    # 유효성 검사
-    if service not in SERVICES:
-        log_error(f"[create_directory] 알 수 없는 서비스: {service}")
-        return
-    
-    service_dir = f"{BASE_DIR}/{service}"
-    subprocess.run(['sudo', 'mkdir', '-p', service_dir])
-    subprocess.run(['sudo', 'chown', '-R', f"{os.getenv('USER')}:{os.getenv('USER')}", service_dir])
-    
-    # 실제 권한 확인 및 로그
-    result = subprocess.run(['ls', '-ld', service_dir], capture_output=True, text=True)
-    log_debug(f"[create_directory] {result.stdout.strip()}")
-    log_info(f"[create_directory] {service} 디렉터리 생성 완료: {service_dir}")
 
-
-
-
-
-
-def replace_env_vars(content: str, service: str) -> str:
-    """환경변수 치환 - config + .env 기반 극단적 간결 버전"""
-    config = load_config(f"{PROJECT_ROOT}/config/{service}.yml", service)
-    
-    # .env 환경변수 추가 로딩 (보안 민감 정보)
-    env_vars = {
-        'POSTGRES_USER': os.getenv('POSTGRES_USER', 'postgres'),
-        'POSTGRES_PASSWORD': os.getenv('POSTGRES_PASSWORD', 'postgres'),
-        'POSTGRES_DB': os.getenv('POSTGRES_DB', 'ai4infra'),
-        'VAULT_DEV_ROOT_TOKEN_ID': os.getenv('VAULT_DEV_ROOT_TOKEN_ID', 'myroot'),
-        'VAULT_DEV_LISTEN_ADDRESS': os.getenv('VAULT_DEV_LISTEN_ADDRESS', '0.0.0.0:8200')
-    }
-    
-    # config 설정 치환
-    for key, value in config.items():
-        if isinstance(value, str) and "${BASE_DIR}" in value:
-            value = value.replace("${BASE_DIR}", BASE_DIR)
-        content = content.replace(f"${{{key}}}", str(value))
-        content = re.sub(rf'\${{{re.escape(key)}:-[^}}]*}}', str(value), content)
-    
-    # .env 환경변수 치환
-    for key, value in env_vars.items():
-        content = content.replace(f"${{{key}}}", str(value))
-        content = re.sub(rf'\${{{re.escape(key)}:-[^}}]*}}', str(value), content)
-    
-    return content
-
-
-def copy_template(service: str):
-    """템플릿 복사 및 환경변수 치환 - 극단적 간결 버전"""
-    template_dir = f"{PROJECT_ROOT}/template/{service}"
-    target_dir = f"{BASE_DIR}/{service}"
-    
-    if not os.path.exists(template_dir):
-        return
-    
-    # 템플릿 파일들 찾기
-    result = subprocess.run(['find', template_dir, '-type', 'f'], capture_output=True, text=True)
-    files = [f for f in result.stdout.strip().split('\n') if f.strip()]
-    
-    # 파일별 복사 및 치환
-    for file_path in files:
-        rel_path = file_path.replace(f"{template_dir}/", "")
-        target_file = f"{target_dir}/{rel_path}"
-        
-        # 디렉터리 생성 및 파일 처리
-        subprocess.run(['sudo', 'mkdir', '-p', os.path.dirname(target_file)])
-        
-        with open(file_path, 'r') as f:
-            content = replace_env_vars(f.read(), service)
-        
-        with open(target_file, 'w') as f:
-            f.write(content)
-    
-    # 권한 설정
-    subprocess.run(['sudo', 'chown', '-R', f"{os.getenv('USER')}:{os.getenv('USER')}", target_dir])
-    
-    log_info(f"[copy_template] {service} → {len(files)}개 파일 복사 완료")
 
 
 @app.command()
 def install(service: str = typer.Argument("all", help="설치할 서비스 이름 (또는 'all' 전체)")):
     services_to_install = SERVICES if service == "all" else [service]
+
+    # bitwarden 사용자 생성
+    if 'bitwarden' in services_to_install:
+        result = create_bitwarden_user ()
+        log_debug(f"[install] bitwarden 사용자 생성 결과: {result}")
     
     # 각 서비스별 처리
     for svc_name in services_to_install:
         print(f"####################################################################")
         log_info(f"[install] {svc_name} 설치 시작")
-        
+
         # 1. 컨테이너 중지
         stop_container(
             service=svc_name,
@@ -200,8 +120,8 @@ def install(service: str = typer.Argument("all", help="설치할 서비스 이�
         
         # 3. 디렉터리 생성
         create_directory(svc_name)
-        
-        # 4. 템플릿 복사
+
+        #4. 템플릿 복사
         copy_template(svc_name)
         
         # 5. 인증서 생성 (Vault 프로덕션 모드용)
@@ -216,8 +136,7 @@ def install(service: str = typer.Argument("all", help="설치할 서비스 이�
     
     # 서비스별로 Docker 컨테이너 구동
     # 8. 서비스별로 헬스체크 확인
-    
-
+  
 @app.command()
 def backup(service: str = typer.Argument(..., help="백업할 서비스 (postgres, all)")):
     """서비스 데이터 백업"""
@@ -268,7 +187,6 @@ def restore(
     
     log_info(f"[restore] {service} 복원 완료: {backup_file}")
 
-
 @app.command()
 def cert(
     services: List[str] = typer.Argument(help="인증서를 생성할 서비스 목록"),
@@ -289,7 +207,6 @@ def cert(
         log_info(f"[cert] {len(services)}개 서비스 인증서 생성 완료")
     else:
         log_error("[cert] 일부 인증서 생성 실패")
-
 
 @app.command()
 def init_vault():
@@ -327,7 +244,6 @@ def init_vault():
             log_info("[init_vault] Vault가 이미 초기화됨")
         else:
             log_error(f"[init_vault] 초기화 실패: {e.stderr}")
-
 
 @app.command()
 def unseal_vault():

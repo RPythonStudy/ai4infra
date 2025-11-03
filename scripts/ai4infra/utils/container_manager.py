@@ -14,14 +14,17 @@ from datetime import datetime
 
 import sys
 import os
+import re
 
 from dotenv import load_dotenv
-    
+
+from common.load_config import load_config
 from common.logger import log_debug, log_error, log_info
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
+SERVICES = ['postgres', 'vault', 'elk', 'ldap']
 
 
 def stop_container(
@@ -101,12 +104,10 @@ def stop_container(
     else:
         log_error(f"[stop_container] {service} → 중지 실패, 여전히 실행 중: {', '.join(remaining_containers)}")
 
-
 def docker_stop_function(containers: List[str]):
     """Docker 명령어로 직접 중지"""
     for container in containers:
         subprocess.run(['sudo', 'docker', 'stop', container])
-
 
 def bitwarden_stop_function(bitwarden_dir: str):
     """Bitwarden 스크립트로 중지"""
@@ -115,6 +116,128 @@ def bitwarden_stop_function(bitwarden_dir: str):
             'sudo', '-u', 'bitwarden', f'{bitwarden_dir}/bitwarden.sh', 'stop'
         ], cwd=bitwarden_dir)
     return _stop
+
+def create_bitwarden_user(password: str = "bitwarden2024!") -> bool:
+    """bitwarden 시스템 사용자 생성"""
+    log_info("[create_bitwarden_user] 시작")
+    
+    try:
+        # 사용자가 이미 존재하는지 확인
+        result = subprocess.run(['id', 'bitwarden'], capture_output=True, text=True)
+        if result.returncode == 0:
+            log_info("[create_bitwarden_user] 사용자 'bitwarden'이 이미 존재합니다")
+            return True
+        else:
+            # 사용자 생성 (비대화형)
+            subprocess.run(['sudo', 'useradd', '-m', '-s', '/bin/bash', 'bitwarden'], check=True)
+            # 비밀번호 설정
+            subprocess.run(f'echo "bitwarden:{password}" | sudo chpasswd', 
+                          shell=True, check=True)
+            log_info("[create_bitwarden_user] 사용자 bitwarden 생성 및 비밀번호 설정 완료")
+            return True
+    except subprocess.CalledProcessError as e:
+        log_error(f"[create_bitwarden_user] 사용자 생성 실패: {e}")
+        return False
+
+def create_directory(service: str):
+    """단일 서비스 디렉터리 생성 - bitwarden 자동인식 버전"""
+    # 유효성 검사 (bitwarden 포함)
+    all_services = SERVICES + ['bitwarden']
+    if service not in all_services:
+        log_error(f"[create_directory] 알 수 없는 서비스: {service}")
+        return
+    
+    service_dir = f"{BASE_DIR}/{service}"
+    subprocess.run(['sudo', 'mkdir', '-p', service_dir])
+    
+    # 서비스별 소유권 설정
+    if service == 'bitwarden':
+        owner = 'bitwarden:bitwarden'
+    else:
+        owner = f"{os.getenv('USER')}:{os.getenv('USER')}"
+    
+    subprocess.run(['sudo', 'chown', '-R', owner, service_dir])
+    
+    # 실제 권한 확인 및 로그
+    result = subprocess.run(['ls', '-ld', service_dir], capture_output=True, text=True)
+    log_debug(f"[create_directory] {result.stdout.strip()}")
+    log_info(f"[create_directory] {service} 디렉터리 생성 완료: {service_dir} (소유자: {owner})")
+
+def replace_env_vars(content: str, service: str) -> str:
+    """환경변수 치환 - config + .env 기반 극단적 간결 버전"""
+    config = load_config(f"{PROJECT_ROOT}/config/{service}.yml", service)
+    
+    # .env 환경변수 추가 로딩 (보안 민감 정보)
+    env_vars = {
+        'POSTGRES_USER': os.getenv('POSTGRES_USER', 'postgres'),
+        'POSTGRES_PASSWORD': os.getenv('POSTGRES_PASSWORD', 'postgres'),
+        'POSTGRES_DB': os.getenv('POSTGRES_DB', 'ai4infra'),
+        'VAULT_DEV_ROOT_TOKEN_ID': os.getenv('VAULT_DEV_ROOT_TOKEN_ID', 'myroot'),
+        'VAULT_DEV_LISTEN_ADDRESS': os.getenv('VAULT_DEV_LISTEN_ADDRESS', '0.0.0.0:8200')
+    }
+    
+    # config 설정 치환
+    for key, value in config.items():
+        if isinstance(value, str) and "${BASE_DIR}" in value:
+            value = value.replace("${BASE_DIR}", BASE_DIR)
+        content = content.replace(f"${{{key}}}", str(value))
+        content = re.sub(rf'\${{{re.escape(key)}:-[^}}]*}}', str(value), content)
+    
+    # .env 환경변수 치환
+    for key, value in env_vars.items():
+        content = content.replace(f"${{{key}}}", str(value))
+        content = re.sub(rf'\${{{re.escape(key)}:-[^}}]*}}', str(value), content)
+    
+    return content
+
+def copy_template(service: str):
+    """템플릿 복사 및 환경변수 치환 - 극단적 간결 버전"""
+    template_dir = f"{PROJECT_ROOT}/template/{service}"
+    target_dir = f"{BASE_DIR}/{service}"
+    
+    if not os.path.exists(template_dir):
+        return
+    
+    # 템플릿 파일들 찾기
+    result = subprocess.run(['find', template_dir, '-type', 'f'], capture_output=True, text=True)
+    files = [f for f in result.stdout.strip().split('\n') if f.strip()]
+    
+    # 파일별 복사 및 치환
+    for file_path in files:
+        rel_path = file_path.replace(f"{template_dir}/", "")
+        target_file = f"{target_dir}/{rel_path}"
+        
+        # 디렉터리 생성 및 파일 처리
+        subprocess.run(['sudo', 'mkdir', '-p', os.path.dirname(target_file)])
+        
+        with open(file_path, 'r') as f:
+            content = replace_env_vars(f.read(), service)
+
+        # bitwarden의 경우 임시 파일로 처리
+        if service == 'bitwarden':
+            # 임시 파일 생성
+            temp_file = f"/tmp/{os.path.basename(target_file)}"
+            with open(temp_file, 'w') as f:
+                f.write(content)
+            
+            # sudo로 복사
+            subprocess.run(['sudo', 'cp', temp_file, target_file])
+            subprocess.run(['rm', temp_file])
+        else:
+            # 일반 서비스는 기존 방식
+            with open(target_file, 'w') as f:
+                f.write(content)            
+        
+    
+     # 서비스별 권한 설정
+    if service == 'bitwarden':
+        owner = 'bitwarden:bitwarden'
+    else:
+        owner = f"{os.getenv('USER')}:{os.getenv('USER')}"
+    
+    subprocess.run(['sudo', 'chown', '-R', owner, target_dir])
+    
+    log_info(f"[copy_template] {service} → {len(files)}개 파일 복사 완료 (소유자: {owner})")
 
 def backup_data(service: str) -> str:
     """서비스 데이터 백업 - 극단적 간결 버전"""
