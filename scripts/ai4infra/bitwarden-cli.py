@@ -181,7 +181,7 @@ def start():
 
 @app.command()
 def setup_all(
-    password: str = typer.Option("bitwarden2024!", "--password", help="bitwarden 사용자 비밀번호"),
+    password: str = typer.Option("bit", "--password", help="bitwarden 사용자 비밀번호"),
     force: bool = typer.Option(False, "--force", "-f", help="기존 설치 강제 삭제 후 재설치")
 ):
     """전체 설치 (완전 자동화)"""

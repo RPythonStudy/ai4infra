@@ -9,6 +9,7 @@
 """
 
 import subprocess
+from pathlib import Path
 from typing import List, Callable
 from datetime import datetime
 
@@ -24,8 +25,41 @@ from common.logger import log_debug, log_error, log_info
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
-SERVICES = ['postgres', 'vault', 'elk', 'ldap']
+SERVICES = ['postgres', 'vault', 'elk', 'ldap', 'bitwarden']
 
+def setup_sudoers():
+    """Sudoers 설정 (멱등성 보장)"""
+    log_info("[setup-sudoers] 시작")
+    
+    bitwarden_dir = f"{BASE_DIR}/bitwarden"
+    sudoers_file = "/etc/sudoers.d/bitwarden-docker"
+    sudoers_line = f"bitwarden ALL=(ALL) NOPASSWD: /usr/bin/docker, {bitwarden_dir}/bitwarden.sh"
+    
+    # 파일 존재 및 내용 확인
+    if Path(sudoers_file).exists():
+        result = subprocess.run(['sudo', 'grep', '-F', sudoers_line, sudoers_file], 
+                              capture_output=True)
+        if result.returncode == 0:
+            log_info("[setup-sudoers] 이미 설정되어 있음")
+            result = subprocess.run(['sudo', '-u', 'bitwarden', 'sudo', '-l'], capture_output=True, text=True)
+            log_info(f"[setup-sudoers] 완료 {result.stdout.strip()}")
+            return
+        else:
+            log_info("[setup-sudoers] 기존 파일에 내용 추가")
+            # 기존 파일에 추가
+            subprocess.run(['sudo', 'bash', '-c', f'echo "{sudoers_line}" >> {sudoers_file}'])
+    else:
+        log_info("[setup-sudoers] 새 파일 생성")
+        # 새 파일 생성
+        with open('/tmp/bitwarden-docker', 'w') as f:
+            f.write(f"{sudoers_line}\n")
+        subprocess.run(['sudo', 'cp', '/tmp/bitwarden-docker', sudoers_file])
+        subprocess.run(['rm', '/tmp/bitwarden-docker'])
+    
+    # 권한 설정 (항상 실행)
+    subprocess.run(['sudo', 'chmod', '440', sudoers_file])
+    result = subprocess.run(['sudo', '-u', 'bitwarden', 'sudo', '-l'], capture_output=True, text=True)
+    log_info(f"[setup-sudoers] 완료 {result.stdout.strip()}")
 
 def stop_container(
     service: str,
@@ -140,28 +174,18 @@ def create_bitwarden_user(password: str = "bitwarden2024!") -> bool:
         return False
 
 def create_directory(service: str):
-    """단일 서비스 디렉터리 생성 - bitwarden 자동인식 버전"""
-    # 유효성 검사 (bitwarden 포함)
-    all_services = SERVICES + ['bitwarden']
-    if service not in all_services:
+    """단일 서비스 디렉터리 생성 - root 소유권으로 생성"""
+    # 유효성 검사
+    if service not in SERVICES:
         log_error(f"[create_directory] 알 수 없는 서비스: {service}")
         return
     
     service_dir = f"{BASE_DIR}/{service}"
     subprocess.run(['sudo', 'mkdir', '-p', service_dir])
     
-    # 서비스별 소유권 설정
-    if service == 'bitwarden':
-        owner = 'bitwarden:bitwarden'
-    else:
-        owner = f"{os.getenv('USER')}:{os.getenv('USER')}"
-    
-    subprocess.run(['sudo', 'chown', '-R', owner, service_dir])
-    
     # 실제 권한 확인 및 로그
     result = subprocess.run(['ls', '-ld', service_dir], capture_output=True, text=True)
     log_debug(f"[create_directory] {result.stdout.strip()}")
-    log_info(f"[create_directory] {service} 디렉터리 생성 완료: {service_dir} (소유자: {owner})")
 
 def replace_env_vars(content: str, service: str) -> str:
     """환경변수 치환 - config + .env 기반 극단적 간결 버전"""
@@ -213,23 +237,16 @@ def copy_template(service: str):
         with open(file_path, 'r') as f:
             content = replace_env_vars(f.read(), service)
 
-        # bitwarden의 경우 임시 파일로 처리
-        if service == 'bitwarden':
-            # 임시 파일 생성
-            temp_file = f"/tmp/{os.path.basename(target_file)}"
-            with open(temp_file, 'w') as f:
-                f.write(content)
-            
-            # sudo로 복사
-            subprocess.run(['sudo', 'cp', temp_file, target_file])
-            subprocess.run(['rm', temp_file])
-        else:
-            # 일반 서비스는 기존 방식
-            with open(target_file, 'w') as f:
-                f.write(content)            
+        # 모든 서비스 임시 파일로 처리 (통일된 방식)
+        temp_file = f"/tmp/{service}_{os.path.basename(target_file)}"
+        with open(temp_file, 'w') as f:
+            f.write(content)
         
+        # sudo로 복사
+        subprocess.run(['sudo', 'cp', temp_file, target_file])
+        subprocess.run(['rm', temp_file])
     
-     # 서비스별 권한 설정
+    # 서비스별 권한 설정 (마지막 단계)
     if service == 'bitwarden':
         owner = 'bitwarden:bitwarden'
     else:
@@ -238,6 +255,58 @@ def copy_template(service: str):
     subprocess.run(['sudo', 'chown', '-R', owner, target_dir])
     
     log_info(f"[copy_template] {service} → {len(files)}개 파일 복사 완료 (소유자: {owner})")
+
+def bitwarden_start():  # 함수명 수정
+    """Bitwarden 시작"""
+    log_info("[bitwarden_start] 시작")
+    
+    bitwarden_dir = f"{BASE_DIR}/bitwarden"
+    bitwarden_script = f"{bitwarden_dir}/bitwarden.sh"
+    
+    # 1. 파일 존재 확인
+    if not os.path.exists(bitwarden_script):
+        log_error(f"[bitwarden_start] bitwarden.sh 파일 없음: {bitwarden_script}")
+        return False
+    
+    # 2. 실행 권한 설정 (sudo 사용)
+    try:
+        subprocess.run(['sudo', 'chmod', '+x', bitwarden_script], check=True)
+        log_debug(f"[bitwarden_start] 실행 권한 설정 완료: {bitwarden_script}")
+    except subprocess.CalledProcessError as e:
+        log_error(f"[bitwarden_start] 권한 설정 실패: {e}")
+        return False
+    
+    # 3. Bitwarden 설치 (실시간 출력 + 타임아웃)
+    try:
+        log_info("[bitwarden_start] Bitwarden 설치 중... (최대 10분 소요)")
+        result = subprocess.run([
+            'sudo', '-u', 'bitwarden', bitwarden_script, 'install'
+        ], cwd=bitwarden_dir, timeout=600, check=True)  # 10분 타임아웃, 실시간 출력
+        
+        log_info("[bitwarden_start] 설치 완료")
+        
+    except subprocess.TimeoutExpired:
+        log_error("[bitwarden_start] 설치 타임아웃 (10분 초과)")
+        return False
+    except subprocess.CalledProcessError as e:
+        log_error(f"[bitwarden_start] 설치 실패: {e}")
+        return False
+    
+    # 4. Bitwarden 시작
+    try:
+        log_info("[bitwarden_start] Bitwarden 시작 중...")
+        result = subprocess.run([
+            'sudo', '-u', 'bitwarden', bitwarden_script, 'start'
+        ], cwd=bitwarden_dir, capture_output=True, text=True, check=True)
+        
+        log_info(f"[bitwarden_start] 시작 완료")
+        log_debug(f"[bitwarden_start] 시작 출력: {result.stdout}")
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        log_error(f"[bitwarden_start] 시작 실패: {e}")
+        log_error(f"[bitwarden_start] 시작 stderr: {e.stderr}")
+        return False
 
 def backup_data(service: str) -> str:
     """서비스 데이터 백업 - 극단적 간결 버전"""

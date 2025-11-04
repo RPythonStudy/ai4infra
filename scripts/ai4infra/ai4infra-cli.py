@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 
 # Local imports
 from common.logger import log_debug, log_error, log_info
-from utils.container_manager import docker_stop_function, stop_container, create_bitwarden_user, create_directory, replace_env_vars, copy_template, backup_data
+from utils.container_manager import setup_sudoers, docker_stop_function, stop_container, create_bitwarden_user, create_directory, copy_template, bitwarden_start, backup_data
 from utils.generate_certificates import generate_certificates
 
 load_dotenv()
@@ -46,47 +46,52 @@ def ensure_network():
 
 def start_container(service: str):
     """단일 서비스 컨테이너 시작 - 디버깅 강화 버전"""
-    service_dir = f"{BASE_DIR}/{service}"
-    compose_file = f"{service_dir}/docker-compose.yml"
-    
-    log_debug(f"[start_container] 시작: service_dir={service_dir}")
-    log_debug(f"[start_container] compose_file={compose_file}")
-    
-    # docker-compose.yml 존재 확인
-    if not os.path.exists(compose_file):
-        log_error(f"[start_container] {service} docker-compose.yml 없음: {compose_file}")
-        return
-    
-    # 네트워크 생성 확인
-    ensure_network()
-    
-    # 파일 권한 및 내용 확인
-    result = subprocess.run(['ls', '-la', compose_file], capture_output=True, text=True)
-    log_debug(f"[start_container] 파일 권한: {result.stdout.strip()}")
-    
-    # docker compose 버전 확인 (sudo 사용)
-    result = subprocess.run(['sudo', 'docker', 'compose', 'version'], capture_output=True, text=True)
-    # log_debug(f"[start_container] docker compose 버전: {result.stdout.strip()}")
 
-    # 실행 명령어 로깅 (sudo 추가)
-    cmd = ['sudo', 'docker', 'compose', '-f', compose_file, 'up', '-d']
-    log_debug(f"[start_container] 실행 명령: {' '.join(cmd)}")
-    log_debug(f"[start_container] 작업 디렉터리: {service_dir}")
-    
-    # 컨테이너 시작 (sudo 사용)
-    result = subprocess.run(cmd, cwd=service_dir, capture_output=True, text=True)
-    
-    # 상세한 결과 로깅
-    log_debug(f"[start_container] 반환코드: {result.returncode}")
-    log_debug(f"[start_container] stdout: {result.stdout}")
-    log_debug(f"[start_container] stderr: {result.stderr}")
-    
-    if result.returncode == 0:
-        log_info(f"[start_container] {service} 컨테이너 시작됨")
+    if service == "bitwarden":
+        bitwarden_start()
+        return
     else:
-        log_error(f"[start_container] {service} 시작 실패")
-        log_error(f"[start_container] 오류 내용: {result.stderr}")
-        log_error(f"[start_container] 출력 내용: {result.stdout}")
+        service_dir = f"{BASE_DIR}/{service}"
+        compose_file = f"{service_dir}/docker-compose.yml"
+    
+        log_debug(f"[start_container] 시작: service_dir={service_dir}")
+        log_debug(f"[start_container] compose_file={compose_file}")
+    
+        # docker-compose.yml 존재 확인
+        if not os.path.exists(compose_file):
+            log_error(f"[start_container] {service} docker-compose.yml 없음: {compose_file}")
+            return
+    
+        # 네트워크 생성 확인
+        ensure_network()
+    
+        # 파일 권한 및 내용 확인
+        result = subprocess.run(['ls', '-la', compose_file], capture_output=True, text=True)
+        log_debug(f"[start_container] 파일 권한: {result.stdout.strip()}")
+    
+        # docker compose 버전 확인 (sudo 사용)
+        result = subprocess.run(['sudo', 'docker', 'compose', 'version'], capture_output=True, text=True)
+        # log_debug(f"[start_container] docker compose 버전: {result.stdout.strip()}")
+
+        # 실행 명령어 로깅 (sudo 추가)
+        cmd = ['sudo', 'docker', 'compose', '-f', compose_file, 'up', '-d']
+        log_debug(f"[start_container] 실행 명령: {' '.join(cmd)}")
+        log_debug(f"[start_container] 작업 디렉터리: {service_dir}")
+    
+        # 컨테이너 시작 (sudo 사용)
+        result = subprocess.run(cmd, cwd=service_dir, capture_output=True, text=True)
+    
+        # 상세한 결과 로깅
+        log_debug(f"[start_container] 반환코드: {result.returncode}")
+        log_debug(f"[start_container] stdout: {result.stdout}")
+        log_debug(f"[start_container] stderr: {result.stderr}")
+    
+        if result.returncode == 0:
+            log_info(f"[start_container] {service} 컨테이너 시작됨")
+        else:
+            log_error(f"[start_container] {service} 시작 실패")
+            log_error(f"[start_container] 오류 내용: {result.stderr}")
+            log_error(f"[start_container] 출력 내용: {result.stdout}")
 
 
 
@@ -100,6 +105,7 @@ def install(service: str = typer.Argument("all", help="설치할 서비스 이�
     if 'bitwarden' in services_to_install:
         result = create_bitwarden_user ()
         log_debug(f"[install] bitwarden 사용자 생성 결과: {result}")
+        setup_sudoers()
     
     # 각 서비스별 처리
     for svc_name in services_to_install:
