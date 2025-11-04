@@ -1,17 +1,8 @@
-postgres-install:
-	sudo $(shell which python) scripts/postgres/manage.py install
+ins-bit:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install bitwarden
 
-postgres-backup:
-	sudo $(shell which python) scripts/postgres/manage.py backup
+ins-pos:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres
 
-postgres-restore:
-	sudo $(shell which python) scripts/postgres/manage.py restore
-
-infra-info:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py info
-
-infra-ls:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py ls
-
-infra-status:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py status
+ins-all:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres

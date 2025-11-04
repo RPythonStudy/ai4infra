@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 
 # Local imports
 from common.logger import log_debug, log_error, log_info
-from utils.container_manager import setup_sudoers, docker_stop_function, stop_container, create_bitwarden_user, create_directory, copy_template, bitwarden_start, backup_data
+from utils.container_manager import setup_sudoers, stop_container, create_bitwarden_user, create_directory, prepare_service, install_bitwarden, ensure_network, start_container, backup_data
 from utils.generate_certificates import generate_certificates
 
 load_dotenv()
@@ -31,114 +31,48 @@ PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
 
 app = typer.Typer(help="AI4INFRA 서비스 관리")
-SERVICES = ['postgres', 'vault', 'elk', 'ldap']
-
-def ensure_network():
-    """ai4infra 네트워크 생성 - 극단적 간결 버전"""
-    result = subprocess.run(['sudo', 'docker', 'network', 'ls', '--filter', 'name=ai4infra', '--format', '{{.Name}}'], 
-                           capture_output=True, text=True)
-    
-    if 'ai4infra' not in result.stdout:
-        subprocess.run(['sudo', 'docker', 'network', 'create', 'ai4infra'])
-        log_info("[ensure_network] ai4infra 네트워크 생성됨")
-    else:
-        log_debug("[ensure_network] ai4infra 네트워크 이미 존재")
-
-def start_container(service: str):
-    """단일 서비스 컨테이너 시작 - 디버깅 강화 버전"""
-
-    if service == "bitwarden":
-        bitwarden_start()
-        return
-    else:
-        service_dir = f"{BASE_DIR}/{service}"
-        compose_file = f"{service_dir}/docker-compose.yml"
-    
-        log_debug(f"[start_container] 시작: service_dir={service_dir}")
-        log_debug(f"[start_container] compose_file={compose_file}")
-    
-        # docker-compose.yml 존재 확인
-        if not os.path.exists(compose_file):
-            log_error(f"[start_container] {service} docker-compose.yml 없음: {compose_file}")
-            return
-    
-        # 네트워크 생성 확인
-        ensure_network()
-    
-        # 파일 권한 및 내용 확인
-        result = subprocess.run(['ls', '-la', compose_file], capture_output=True, text=True)
-        log_debug(f"[start_container] 파일 권한: {result.stdout.strip()}")
-    
-        # docker compose 버전 확인 (sudo 사용)
-        result = subprocess.run(['sudo', 'docker', 'compose', 'version'], capture_output=True, text=True)
-        # log_debug(f"[start_container] docker compose 버전: {result.stdout.strip()}")
-
-        # 실행 명령어 로깅 (sudo 추가)
-        cmd = ['sudo', 'docker', 'compose', '-f', compose_file, 'up', '-d']
-        log_debug(f"[start_container] 실행 명령: {' '.join(cmd)}")
-        log_debug(f"[start_container] 작업 디렉터리: {service_dir}")
-    
-        # 컨테이너 시작 (sudo 사용)
-        result = subprocess.run(cmd, cwd=service_dir, capture_output=True, text=True)
-    
-        # 상세한 결과 로깅
-        log_debug(f"[start_container] 반환코드: {result.returncode}")
-        log_debug(f"[start_container] stdout: {result.stdout}")
-        log_debug(f"[start_container] stderr: {result.stderr}")
-    
-        if result.returncode == 0:
-            log_info(f"[start_container] {service} 컨테이너 시작됨")
-        else:
-            log_error(f"[start_container] {service} 시작 실패")
-            log_error(f"[start_container] 오류 내용: {result.stderr}")
-            log_error(f"[start_container] 출력 내용: {result.stdout}")
-
-
-
+SERVICES = ('postgres', 'vault', 'elk', 'ldap') # 튜플로 선언하어 변경 방지
 
 
 @app.command()
 def install(service: str = typer.Argument("all", help="설치할 서비스 이름 (또는 'all' 전체)")):
-    services_to_install = SERVICES if service == "all" else [service]
+
+    services = list(SERVICES) if service == "all" else [service]
 
     # bitwarden 사용자 생성
-    if 'bitwarden' in services_to_install:
+    if 'bitwarden' in services:
         result = create_bitwarden_user ()
         log_debug(f"[install] bitwarden 사용자 생성 결과: {result}")
         setup_sudoers()
     
     # 각 서비스별 처리
-    for svc_name in services_to_install:
-        print(f"####################################################################")
-        log_info(f"[install] {svc_name} 설치 시작")
+    for service in services:
 
         # 1. 컨테이너 중지
-        stop_container(
-            service=svc_name,
-            search_pattern=f'ai4infra-{svc_name}',
-            stop_function=docker_stop_function
-        )
+        stop_container(service)
         
         # 2. 기존 데이터 백업
-        backup_file = backup_data(svc_name)
-        if backup_file:
-            log_info(f"[install] {svc_name} 백업 완료: {backup_file}")
+        backup_data(service)
         
         # 3. 디렉터리 생성
-        create_directory(svc_name)
+        create_directory(service)
 
         #4. 템플릿 복사
-        copy_template(svc_name)
+        prepare_service(service)
+
+        #5. bitwarden 설치
+        if service == "bitwarden":
+            install_bitwarden()
+
+        # 6. 인증서 생성 (Vault 프로덕션 모드용)
+        if service == "vault":
+            log_info(f"[install] {service} SSL 인증서 생성 중...")
+            generate_certificates([service], overwrite=False)
+
+        # 7. 컨테이너 시작
+        start_container(service)
         
-        # 5. 인증서 생성 (Vault 프로덕션 모드용)
-        if svc_name == "vault":
-            log_info(f"[install] {svc_name} SSL 인증서 생성 중...")
-            generate_certificates([svc_name], overwrite=False)
-        
-        # 6. 컨테이너 시작
-        start_container(svc_name)
-        
-        log_info(f"[install] {svc_name} 설치 완료")
+        log_info(f"[install] {service} 설치 완료")
     
     # 서비스별로 Docker 컨테이너 구동
     # 8. 서비스별로 헬스체크 확인
@@ -146,7 +80,7 @@ def install(service: str = typer.Argument("all", help="설치할 서비스 이�
 @app.command()
 def backup(service: str = typer.Argument(..., help="백업할 서비스 (postgres, all)")):
     """서비스 데이터 백업"""
-    services = SERVICES if service == "all" else [service]
+    services = list(SERVICES) if service == "all" else [service]
     
     backup_files = []
     for svc in services:
@@ -174,11 +108,7 @@ def restore(
         return
     
     # 2. 컨테이너 중지
-    stop_container(
-        service=service,
-        search_pattern=f'ai4infra-{service}',
-        stop_function=docker_stop_function
-    )
+    stop_container(service)
     
     # 3. 기존 데이터 삭제
     data_dir = f"{BASE_DIR}/{service}/data"
