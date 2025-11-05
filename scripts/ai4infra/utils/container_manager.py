@@ -182,32 +182,11 @@ def create_directory(service: str):
     log_debug(f"[create_directory] {result.stdout.strip()}")
 
 def prepare_service(service: str) -> str:
-
-    """템플릿을 서비스 디렉터리로 재귀 복사(항상 덮어쓰기)하고 소유권을 보장합니다.
-
-    동작:
-    - `template/{service}`가 존재하는지 확인
-    - `service_dir`가 존재하는지 확인(서비스 준비 전 `create_directory`가 호출되었어야 함)
-    - 항상 `service_dir` 내부를 제거한 뒤(template 내용을 덮어씀)
-    - `cp -a template/. service_dir`로 재귀 복사
-    - 서비스별 소유자로 `chown -R` 수행(항상 보장)
-
-    반환: 서비스 디렉터리 경로(성공) 또는 빈 문자열(실패)
-    """
     template_dir = f"{PROJECT_ROOT}/template/{service}"
     service_dir = f"{BASE_DIR}/{service}"
 
-    # 템플릿 존재 확인
-    if not os.path.exists(template_dir):
-        log_error(f"[prepare_service] 템플릿 없음: {template_dir}")
-        return ""
-
-
     try:
-        # 항상 덮어쓰기: 서비스 디렉터리 내부 삭제
         subprocess.run(['sudo', 'bash', '-c', f'rm -rf "{service_dir}"/*'], check=True)
-
-        # 재귀 복사 (퍼미션/소유권 유지 시도)
         subprocess.run(['sudo', 'cp', '-a', f"{template_dir}/.", service_dir], check=True)
 
         # 소유자 설정: 항상 수행하여 소유권 보장
@@ -225,23 +204,16 @@ def prepare_service(service: str) -> str:
         return ""
 
 def install_bitwarden():
-    """Manual-first installation flow for Bitwarden.
-
-    This function does not attempt automated installs. It prints clear manual
-    steps for the operator to run in a separate terminal, then blocks on Enter.
-    After Enter it calls `bitwarden_start()` to try to start the service.
-    """
     bitwarden_dir = f"{BASE_DIR}/bitwarden"
     bitwarden_script = f"{bitwarden_dir}/bitwarden.sh"
 
-    # 사전 체크
-    if not os.path.exists(bitwarden_dir):
-        log_error(f"[install_bitwarden] 디렉터리 없음: {bitwarden_dir}")
-        return False
+    # 실행가능하도록 설정
+    subprocess.run(['sudo', 'chmod', '+x', bitwarden_script], check=True)
 
-    if not os.path.exists(bitwarden_script):
-        log_error(f"[install_bitwarden] 설치 스크립트 없음: {bitwarden_script}")
-        return False
+    # 설치
+    # subprocess.run(['sudo', '-u','bitwarden', '/opt/ai4infra/bitwarden/bitwarden.sh','install'], check=True)
+
+
 
     # 사용자에게 수동 실행 안내 및 블로킹 대기
     instructions = (
