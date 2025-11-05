@@ -5,6 +5,7 @@
 설명:
 
 변경이력:
+  - 2025-11-05: create_user 구현 (BenKorea)
   - 2025-10-30: 최초 구현 (BenKorea)
 """
 
@@ -27,155 +28,145 @@ PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
 SERVICES = ['postgres', 'vault', 'elk', 'ldap', 'bitwarden']
 
-def create_bitwarden_user(password: str = "bit") -> bool:
-    """bitwarden 시스템 사용자 생성"""
-    log_info("[create_bitwarden_user] 시작")
-    
+def create_user(username: str, password: str = "bit") -> bool:
+    """지정된 시스템 사용자를 생성합니다(이미 존재하면 생성하지 않음).
+
+    동작:
+    - 함수 내부에서 진행 상황과 오류를 `log_info` / `log_error`로 기록합니다.
+    - 사용자가 이미 존재하면 True를 반환하고, 생성이 성공하면 True를 반환합니다.
+    - 생성이 실패하면 False를 반환합니다.
+
+    호출자 주의사항:
+    - 이 헬퍼는 내부 로깅과 불린 반환을 모두 수행하므로 호출자는 반환값을 검사하여
+      계속 진행할지 중단할지 결정해야 합니다.
+
+    미래 검토사항:
+    - 다른 컨테이너들도 uid/gid 변경이 가능하다면 사용자 생성 검토 필요
+    - password 매개변수를 외부에서 받도록 변경 검토  
+
+    변경이력:
+    - 2025-11-05: 최초 구현 (BenKorea)
+    """
     try:
         # 사용자가 이미 존재하는지 확인
-        result = subprocess.run(['id', 'bitwarden'], capture_output=True, text=True)
+        result = subprocess.run(['id', username], capture_output=True, text=True)
         if result.returncode == 0:
-            log_info("[create_bitwarden_user] 사용자 'bitwarden'이 이미 존재합니다")
+            log_debug(f"[create_user] id {username} -> stdout={result.stdout.strip()}")            
+            log_info(f"[create_user] 사용자 '{username}'이 이미 존재하므로 생성하지 않고 계속 진행합니다")
             return True
-        else:
-            # 사용자 생성 (비대화형)
-            subprocess.run(['sudo', 'useradd', '-m', '-s', '/bin/bash', 'bitwarden'], check=True)
-            # 비밀번호 설정
-            subprocess.run(f'echo "bitwarden:{password}" | sudo chpasswd', 
-                          shell=True, check=True)
-            log_info("[create_bitwarden_user] 사용자 bitwarden 생성 및 비밀번호 설정 완료")
-            return True
+
+        # 사용자 생성 (비대화형)
+        subprocess.run(['sudo', 'useradd', '-m', '-s', '/bin/bash', username], check=True)
+        # 비밀번호 설정
+        subprocess.run(f'echo "{username}:{password}" | sudo chpasswd', shell=True, check=True)
+        log_info(f"[create_user] 사용자 {username} 생성 및 비밀번호 설정 완료")
+        return True
+
     except subprocess.CalledProcessError as e:
-        log_error(f"[create_bitwarden_user] 사용자 생성 실패: {e}")
+        log_error(f"[create_user] 사용자 생성 실패: {e}")
         return False
 
-def setup_sudoers():
-    """Sudoers 설정 (멱등성 보장)"""
-    log_info("[setup-sudoers] 시작")
-    
-    bitwarden_dir = f"{BASE_DIR}/bitwarden"
-    sudoers_file = "/etc/sudoers.d/bitwarden-docker"
-    sudoers_line = f"bitwarden ALL=(ALL) NOPASSWD: /usr/bin/docker, {bitwarden_dir}/bitwarden.sh"
-    
-    # 파일 존재 및 내용 확인
-    if Path(sudoers_file).exists():
-        result = subprocess.run(['sudo', 'grep', '-F', sudoers_line, sudoers_file], 
-                              capture_output=True)
-        if result.returncode == 0:
-            log_info("[setup-sudoers] 이미 설정되어 있음")
-            result = subprocess.run(['sudo', '-u', 'bitwarden', 'sudo', '-l'], capture_output=True, text=True)
-            log_info(f"[setup-sudoers] 완료 {result.stdout.strip()}")
-            return
-        else:
-            log_info("[setup-sudoers] 기존 파일에 내용 추가")
-            # 기존 파일에 추가
-            subprocess.run(['sudo', 'bash', '-c', f'echo "{sudoers_line}" >> {sudoers_file}'])
-    else:
-        log_info("[setup-sudoers] 새 파일 생성")
-        # 새 파일 생성
-        with open('/tmp/bitwarden-docker', 'w') as f:
-            f.write(f"{sudoers_line}\n")
-        subprocess.run(['sudo', 'cp', '/tmp/bitwarden-docker', sudoers_file])
-        subprocess.run(['rm', '/tmp/bitwarden-docker'])
-    
-    # 권한 설정 (항상 실행)
-    subprocess.run(['sudo', 'chmod', '440', sudoers_file])
-    result = subprocess.run(['sudo', '-u', 'bitwarden', 'sudo', '-l'], capture_output=True, text=True)
-    log_info(f"[setup-sudoers] 완료 {result.stdout.strip()}")
+def register_sudoers(username: str, sudoers_line: str) -> bool:
+    """Sudoers 설정 (멱등성 보장)
 
-def stop_container(service: str):
-    search_pattern = f'ai4infra-{service}'
-    # 1. 컨테이너 검색
+    변경이력:
+    - 2025-11-05: 최초 구현 (BenKorea)
+    """
+    sudoers_file = f"/etc/sudoers.d/{username}-docker"
+    tmp_path = f"/tmp/{username}-sudoers.tmp"
+
+    try:
+        # 파일이 이미 존재하는지 확인
+        if Path(sudoers_file).exists():
+            # 해당라인이 이미 존재하는지 확인
+            result = subprocess.run(['sudo', 'grep', '-F', sudoers_line, sudoers_file], capture_output=True)
+            if result.returncode == 0:         
+                log_debug(f"[register_sudoers] grep -> stdout={result.stdout.strip()}")
+                log_info("[register_sudoers] 이미 설정되어 있어 등록 및 설정 없이 진행합니다.")
+                return True
+            # 해당라인을 추가
+            result = subprocess.run(['sudo', 'bash', '-c', f'echo "{sudoers_line}" | sudo tee -a {sudoers_file}'], check=True, capture_output=True)
+            if result.returncode == 0:    
+                log_debug(f"[register_sudoers] sudoers_line -> stdout={result.stdout.strip()}")
+                log_info("[register_sudoers] 해당 라인을 추가하였습니다.")
+                return True
+                
+        else:
+            # 파일을 생성
+            with open(tmp_path, 'w') as f:
+                f.write(f"{sudoers_line}\n")
+            result = subprocess.run(['sudo', 'mv', tmp_path, sudoers_file], check=True, capture_output=True)
+            if result.returncode == 0:    
+                log_debug(f"[register_sudoers] sudoers_file 생성 -> stdout={result.stdout.strip()}")
+                log_info("[register_sudoers] sudoers_file 생성 하였습니다.")
+            result = subprocess.run(
+                ['sudo', 'chmod', '440', sudoers_file],
+                capture_output=True,
+                text=True,
+                check=True
+                )
+            if result.returncode == 0:    
+                log_debug(f"[register_sudoers] chmod -> stdout={result.stdout.strip()}")
+                log_info("[register_sudoers] sudoers_file 읽기로만 권한을 부여 하였습니다.")
+            return True
+
+    except subprocess.CalledProcessError as e:
+        log_error(f"[register_sudoers] 명령 실패: {e}")
+        return False
+    except Exception as e:
+        log_error(f"[register_sudoers] 예외 발생: {e}")
+        return False
+
+def stop_container(service: str) -> bool:
+    if service == 'bitwarden':
+        search_pattern = service
+    else:
+        search_pattern = f'ai4infra-{service}'
+
+    # 컨테이너 검색
     result = subprocess.run([
         'sudo', 'docker', 'ps', '--filter', f'name={search_pattern}',
         '--format', '{{.Names}}'
     ], capture_output=True, text=True)
-
-    log_debug(f"[stop_container] result.stdout={result.stdout}")
+    if result.returncode == 0:    
+        log_debug(f"[stop_container] docker ps -> result.stdout={result.stdout}")
 
     containers = [container for container in result.stdout.strip().split('\n') if container]
     
-    # 2. 빈 결과 처리
+    # 빈 결과 처리
     if not containers:
         log_info(f"[stop_container] {service} 실행 중인 컨테이너 없음")
-        return
+        return True
     
-    # 3. 중지 대상 로깅
+    # 중지 대상 
     log_debug(f"[stop_container] {service} 중지 대상: {', '.join(containers)}")
-    
-    # 4. 실제 중지 실행 (서비스별 구현)
-    if service == "bitwarden":
-        """간결한 Bitwarden 설치:
 
-        - `/opt/ai4infra/bitwarden` 디렉터리로 이동하여 설치 스크립트를 실행합니다
-        - 실행 권한 및 소유권을 보장한 뒤, bitwarden 사용자로 설치 명령을 실행합니다
-        """
-        log_info("[install_bitwarden] 시작")
+    # 중단
+    result = docker_stop_function(containers)
 
-        bitwarden_dir = f"{BASE_DIR}/bitwarden"
-        bitwarden_script = f"{bitwarden_dir}/bitwarden.sh"
-
-        if not os.path.exists(bitwarden_dir):
-            log_error(f"[install_bitwarden] 디렉터리 없음: {bitwarden_dir}")
-            return False
-
-        if not os.path.exists(bitwarden_script):
-            log_error(f"[install_bitwarden] 설치 스크립트 없음: {bitwarden_script}")
-            return False
-
-        try:
-            # 실행 권한 및 소유권 보장
-            subprocess.run(['sudo', 'chmod', '+x', bitwarden_script], check=True)
-            subprocess.run(['sudo', 'chown', '-R', 'bitwarden:bitwarden', bitwarden_dir], check=True)
-
-            # bitwarden 사용자로 전환하여 설치 스크립트 실행
-            # (sudoers에 의해 비밀번호 없이 실행 가능해야 함)
-            cmd = f'cd {bitwarden_dir} && sudo ./bitwarden.sh install'
-            subprocess.run(['sudo', '-u', 'bitwarden', 'bash', '-c', cmd], check=True)
-
-            log_info("[install_bitwarden] 설치 명령 실행 완료")
-            return True
-
-        except subprocess.CalledProcessError as e:
-                log_error(f"[install_bitwarden] 실패: {e}")
-                return False
-    
-    # config 설정 치환
-    for key, value in config.items():
-        if isinstance(value, str) and "${BASE_DIR}" in value:
-            value = value.replace("${BASE_DIR}", BASE_DIR)
-        content = content.replace(f"${{{key}}}", str(value))
-        content = re.sub(rf'\${{{re.escape(key)}:-[^}}]*}}', str(value), content)
-    
-    # .env 환경변수 치환
-    for key, value in env_vars.items():
-        content = content.replace(f"${{{key}}}", str(value))
-        content = re.sub(rf'\${{{re.escape(key)}:-[^}}]*}}', str(value), content)
-    
-    return content
 
 def docker_stop_function(containers: List[str]):
     """Docker 명령어로 직접 중지"""
     for container in containers:
-        subprocess.run(['sudo', 'docker', 'stop', container])
+        result = subprocess.run(['sudo', 'docker', 'stop', container], capture_output=True)
+        log_debug(f"[docker_stop_function] sudo docker stop -> stdout={result.stdout.strip()} stderr={result.stderr.strip()} rc={result.returncode}")
 
-def bitwarden_stop_function(bitwarden_dir: str):
-    """Bitwarden 스크립트로 중지"""
-    def _stop(containers: List[str]):
-        subprocess.run([
-            'sudo', '-u', 'bitwarden', f'{bitwarden_dir}/bitwarden.sh', 'stop'
-        ], cwd=bitwarden_dir)
-    return _stop
+def bitwarden_stop_function(bitwarden_dir: str) -> bool:
+    """Bitwarden 중지 스크립트 실행. 성공 시 True, 실패 시 False 반환."""
+    cmd = ['sudo', '-u', 'bitwarden', f'{bitwarden_dir}/bitwarden.sh', 'stop']
+    try:
+        result = subprocess.run(cmd, cwd=bitwarden_dir, capture_output=True, text=True)
+        log_debug(f"[bitwarden_stop] stdout={result.stdout.strip()} stderr={result.stderr.strip()} rc={result.returncode}")
+        return result.returncode == 0
+    except Exception as e:
+        log_error(f"[bitwarden_stop] 예외 발생: {e}")
+        return False
 
 def create_directory(service: str):
-    """단일 서비스 디렉터리 생성 - root 소유권으로 생성"""
-    # 유효성 검사
-    if service not in SERVICES:
-        log_error(f"[create_directory] 알 수 없는 서비스: {service}")
-        return
-    
+    """단일 서비스 디렉터리 생성 - root 소유권으로 생성""" 
     service_dir = f"{BASE_DIR}/{service}"
-    subprocess.run(['sudo', 'mkdir', '-p', service_dir])
+    result = subprocess.run(['sudo', 'mkdir', '-p', service_dir], capture_output=True)
+    log_debug(f"[create_directory] mkdir stdout = {result.stdout.strip()}")
     
     # 실제 권한 확인 및 로그
     result = subprocess.run(['ls', '-ld', service_dir], capture_output=True, text=True)
@@ -240,42 +231,42 @@ def install_bitwarden():
     log_info("[install_bitwarden] 사용자가 설치를 완료했다고 표시함 — 시작 시도")
     return bitwarden_start()
 
-def bitwarden_start ():  # 함수명 수정
-    """Bitwarden 시작"""
-    log_info("[bitwarden_start] 시작")
-
+def bitwarden_start():
     bitwarden_dir = f"{BASE_DIR}/bitwarden"
     bitwarden_script = f"{bitwarden_dir}/bitwarden.sh"
-    
-    # 1. 파일 존재 확인
-    if not os.path.exists(bitwarden_script):
-        log_error(f"[bitwarden_start] bitwarden.sh 파일 없음: {bitwarden_script}")
-        return False
-    
-    # 2. 실행 권한 설정 (sudo 사용)
-    try:
-        subprocess.run(['sudo', 'chmod', '+x', bitwarden_script], check=True)
-        log_debug(f"[bitwarden_start] 실행 권한 설정 완료: {bitwarden_script}")
-    except subprocess.CalledProcessError as e:
-        log_error(f"[bitwarden_start] 권한 설정 실패: {e}")
-        return False
-    
-   
-    
-    # 4. Bitwarden 시작
+
+    # 1. Bitwarden 시작 시도 (자동)
     try:
         log_info("[bitwarden_start] Bitwarden 시작 중...")
         result = subprocess.run([
-            'sudo', '-u', 'bitwarden', bitwarden_script, 'start'
+            'sudo', '-u', 'bitwarden', 'bash', '-c', f'cd {bitwarden_dir} && ./bitwarden.sh start'
         ], cwd=bitwarden_dir, capture_output=True, text=True, check=True)
-        
-        log_info(f"[bitwarden_start] 시작 완료")
+
         log_debug(f"[bitwarden_start] 시작 출력: {result.stdout}")
         return True
-        
+
     except subprocess.CalledProcessError as e:
         log_error(f"[bitwarden_start] 시작 실패: {e}")
         log_error(f"[bitwarden_start] 시작 stderr: {e.stderr}")
+
+        instructions = (
+            "Bitwarden을 수동으로 시작해 주세요 (다른 터미널에서):\n"
+            f"  sudo -i -u bitwarden\n"
+            f"  cd {bitwarden_dir}\n"
+            f"  sudo ./bitwarden.sh start\n\n"
+            "시작 후 원래 터미널로 돌아와 Enter를 눌러 계속하세요."
+        )
+        log_info(f"[bitwarden_start] 수동 시작 안내:\n{instructions}")
+
+        try:
+            input("수동 시작 후 Enter를 눌러 계속합니다...")
+        except KeyboardInterrupt:
+            log_info("[bitwarden_start] 사용자가 중단함")
+            return False
+
+        # 사용자가 수동으로 시작을 수행한 뒤 Enter를 눌렀지만,
+        # 자동 재시도는 하지 않고 상태 확인/후속 작업은 호출자에게 맡깁니다.
+        log_info("[bitwarden_start] 사용자가 수동 시작을 수행했다고 표시함 — 자동 재시도 없음")
         return False
 
 def backup_data(service: str) -> str:
@@ -285,6 +276,7 @@ def backup_data(service: str) -> str:
         data_folder = "bwdata"
     else:
         data_folder = "data"
+
     data_dir = f"{BASE_DIR}/{service}/{data_folder}"
     backup_dir = f"{BASE_DIR}/{service}/backups"
     
@@ -364,4 +356,3 @@ def start_container(service: str):
             log_error(f"[start_container] {service} 시작 실패")
             log_error(f"[start_container] 오류 내용: {result.stderr}")
             log_error(f"[start_container] 출력 내용: {result.stdout}")
-

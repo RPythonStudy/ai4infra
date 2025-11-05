@@ -23,47 +23,61 @@ from dotenv import load_dotenv
 
 # Local imports
 from common.logger import log_debug, log_error, log_info
-from utils.container_manager import setup_sudoers, stop_container, create_bitwarden_user, create_directory, prepare_service, install_bitwarden, ensure_network, start_container, backup_data
+from utils.container_manager import create_user, register_sudoers, stop_container, create_directory, prepare_service, install_bitwarden, ensure_network, start_container, backup_data
 from utils.generate_certificates import generate_certificates
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
-
 app = typer.Typer(help="AI4INFRA 서비스 관리")
 SERVICES = ('postgres', 'vault', 'elk', 'ldap') # 튜플로 선언하어 변경 방지
 
 
 @app.command()
 def install(service: str = typer.Argument("all", help="설치할 서비스 이름 (또는 'all' 전체)")):
-
     services = list(SERVICES) if service == "all" else [service]
 
     # bitwarden 사용자 생성
     if 'bitwarden' in services:
-        result = create_bitwarden_user ()
-        log_debug(f"[install] bitwarden 사용자 생성 결과: {result}")
-        setup_sudoers()
-    
+        result = create_user(username='bitwarden')
+        if not result:
+            log_error("[install] bitwarden 사용자 생성 실패 — 설치 중단")
+            raise typer.Exit(code=1)
+        result = register_sudoers(username='bitwarden',
+                                  sudoers_line=f"bitwarden ALL=(ALL) NOPASSWD: /usr/bin/docker, {BASE_DIR}/bitwarden/bitwarden.sh")
+        if not result:
+            log_error("[install] bitwarden sudoers 설정 실패 — 설치 중단")
+            raise typer.Exit(code=1)
+    breakpoint()
+
     # 각 서비스별 처리
     for service in services:
 
         # 1. 컨테이너 중지
         stop_container(service)
+
+        breakpoint()
         
         # 2. 기존 데이터 백업
         backup_data(service)
-        
+
+        breakpoint()        
+     
         # 3. 디렉터리 생성
         create_directory(service)
+
+        breakpoint()
 
         #4. 템플릿 복사
         prepare_service(service)
 
+        breakpoint()
+
         #5. bitwarden 설치
         if service == "bitwarden":
             install_bitwarden()
-
+        breakpoint()
+        
         # 6. 인증서 생성 (Vault 프로덕션 모드용)
         if service == "vault":
             log_info(f"[install] {service} SSL 인증서 생성 중...")

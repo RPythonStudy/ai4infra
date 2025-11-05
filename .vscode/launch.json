@@ -1,0 +1,12 @@
+{
+  "configurations": [
+    {
+      "name": "Python: ai4infra-cli",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/scripts/ai4infra/ai4infra-cli.py",
+      "args": ["install", "bitwarden"],   // 여기에 원하는 명령 추가
+      "console": "integratedTerminal"
+    }
+  ]
+}
