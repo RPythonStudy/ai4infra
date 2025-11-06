@@ -19,7 +19,6 @@ import os
 import re
 
 from dotenv import load_dotenv
-
 from common.load_config import load_config
 from common.logger import log_debug, log_error, log_info
 
@@ -129,7 +128,7 @@ def stop_container(service: str) -> bool:
         '--format', '{{.Names}}'
     ], capture_output=True, text=True)
     if result.returncode == 0:    
-        log_debug(f"[stop_container] docker ps -> result.stdout={result.stdout}")
+        log_debug(f"[stop_container] docker ps -> result.stdout={result.stdout.strip()}")
 
     containers = [container for container in result.stdout.strip().split('\n') if container]
     
@@ -143,7 +142,6 @@ def stop_container(service: str) -> bool:
 
     # 중단
     result = docker_stop_function(containers)
-
 
 def docker_stop_function(containers: List[str]):
     """Docker 명령어로 직접 중지"""
@@ -177,7 +175,7 @@ def prepare_service(service: str) -> str:
     service_dir = f"{BASE_DIR}/{service}"
 
     try:
-        subprocess.run(['sudo', 'bash', '-c', f'rm -rf "{service_dir}"/*'], check=True)
+        # subprocess.run(['sudo', 'bash', '-c', f'rm -rf "{service_dir}"/*'], check=True)
         subprocess.run(['sudo', 'cp', '-a', f"{template_dir}/.", service_dir], check=True)
 
         # 소유자 설정: 항상 수행하여 소유권 보장
@@ -229,45 +227,29 @@ def install_bitwarden():
 
     # 사용자가 설치를 완료했다고 표시하면 비트워든 시작 시도
     log_info("[install_bitwarden] 사용자가 설치를 완료했다고 표시함 — 시작 시도")
-    return bitwarden_start()
+    return True
 
 def bitwarden_start():
     bitwarden_dir = f"{BASE_DIR}/bitwarden"
     bitwarden_script = f"{bitwarden_dir}/bitwarden.sh"
 
-    # 1. Bitwarden 시작 시도 (자동)
-    try:
-        log_info("[bitwarden_start] Bitwarden 시작 중...")
-        result = subprocess.run([
-            'sudo', '-u', 'bitwarden', 'bash', '-c', f'cd {bitwarden_dir} && ./bitwarden.sh start'
-        ], cwd=bitwarden_dir, capture_output=True, text=True, check=True)
-
-        log_debug(f"[bitwarden_start] 시작 출력: {result.stdout}")
-        return True
-
-    except subprocess.CalledProcessError as e:
-        log_error(f"[bitwarden_start] 시작 실패: {e}")
-        log_error(f"[bitwarden_start] 시작 stderr: {e.stderr}")
-
-        instructions = (
+    instructions = (
             "Bitwarden을 수동으로 시작해 주세요 (다른 터미널에서):\n"
             f"  sudo -i -u bitwarden\n"
             f"  cd {bitwarden_dir}\n"
             f"  sudo ./bitwarden.sh start\n\n"
             "시작 후 원래 터미널로 돌아와 Enter를 눌러 계속하세요."
         )
-        log_info(f"[bitwarden_start] 수동 시작 안내:\n{instructions}")
+    log_info(f"[bitwarden_start] 수동 시작 안내:\n{instructions}")
 
-        try:
-            input("수동 시작 후 Enter를 눌러 계속합니다...")
-        except KeyboardInterrupt:
-            log_info("[bitwarden_start] 사용자가 중단함")
-            return False
-
-        # 사용자가 수동으로 시작을 수행한 뒤 Enter를 눌렀지만,
-        # 자동 재시도는 하지 않고 상태 확인/후속 작업은 호출자에게 맡깁니다.
-        log_info("[bitwarden_start] 사용자가 수동 시작을 수행했다고 표시함 — 자동 재시도 없음")
+    try:
+        input("수동 시작 후 Enter를 눌러 계속합니다...")
+    except KeyboardInterrupt:
+        log_info("[bitwarden_start] 사용자가 중단함")
         return False
+
+    log_info("[bitwarden_start] 사용자가 수동 시작을 수행했다고 표시함 — 자동 재시도 없음")
+    return False
 
 def backup_data(service: str) -> str:
 

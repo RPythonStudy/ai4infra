@@ -5,4 +5,4 @@ ins-pos:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres
 
 ins-all:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install all

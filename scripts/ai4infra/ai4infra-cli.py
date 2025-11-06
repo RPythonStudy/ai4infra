@@ -30,11 +30,11 @@ load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
 app = typer.Typer(help="AI4INFRA 서비스 관리")
-SERVICES = ('postgres', 'vault', 'elk', 'ldap') # 튜플로 선언하어 변경 방지
+SERVICES = ('postgres', 'vault', 'elk', 'ldap', 'bitwarden') # 튜플로 선언하어 변경 방지
 
 
 @app.command()
-def install(service: str = typer.Argument("all", help="설치할 서비스 이름 (또는 'all' 전체)")):
+def install(service: str = typer.Argument("all", help="설치할 서비스 이름")):
     services = list(SERVICES) if service == "all" else [service]
 
     # bitwarden 사용자 생성
@@ -48,35 +48,28 @@ def install(service: str = typer.Argument("all", help="설치할 서비스 이�
         if not result:
             log_error("[install] bitwarden sudoers 설정 실패 — 설치 중단")
             raise typer.Exit(code=1)
-    breakpoint()
 
     # 각 서비스별 처리
     for service in services:
 
+        print("####################################################################################")
+        log_info(f"[install] {service} 설치 시작")
+
         # 1. 컨테이너 중지
         stop_container(service)
-
-        breakpoint()
-        
+       
         # 2. 기존 데이터 백업
         backup_data(service)
-
-        breakpoint()        
      
         # 3. 디렉터리 생성
         create_directory(service)
 
-        breakpoint()
-
         #4. 템플릿 복사
         prepare_service(service)
-
-        breakpoint()
 
         #5. bitwarden 설치
         if service == "bitwarden":
             install_bitwarden()
-        breakpoint()
         
         # 6. 인증서 생성 (Vault 프로덕션 모드용)
         if service == "vault":
