@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 
 # Local imports
 from common.logger import log_debug, log_error, log_info
-from utils.container_manager import create_user, register_sudoers, stop_container, create_directory, prepare_service, install_bitwarden, ensure_network, start_container, backup_data
+from utils.container_manager import create_user, add_sudoer, stop_container, copy_template, generate_env_file, install_bitwarden, ensure_network, start_container, backup_data
 from utils.generate_certificates import generate_certificates
 
 load_dotenv()
@@ -43,7 +43,7 @@ def install(service: str = typer.Argument("all", help="설치할 서비스 이�
         if not result:
             log_error("[install] bitwarden 사용자 생성 실패 — 설치 중단")
             raise typer.Exit(code=1)
-        result = register_sudoers(username='bitwarden',
+        result = add_sudoer(username='bitwarden',
                                   sudoers_line=f"bitwarden ALL=(ALL) NOPASSWD: /usr/bin/docker, {BASE_DIR}/bitwarden/bitwarden.sh")
         if not result:
             log_error("[install] bitwarden sudoers 설정 실패 — 설치 중단")
@@ -56,16 +56,23 @@ def install(service: str = typer.Argument("all", help="설치할 서비스 이�
         log_info(f"[install] {service} 설치 시작")
 
         # 1. 컨테이너 중지
-        stop_container(service)
-       
-        # 2. 기존 데이터 백업
-        backup_data(service)
-     
-        # 3. 디렉터리 생성
-        create_directory(service)
+        if service == 'bitwarden':
+            search_pattern = 'bitwarden'
+        else:
+            search_pattern = f'ai4infra-{service}'
+        stop_container(search_pattern)
 
-        #4. 템플릿 복사
-        prepare_service(service)
+        # 2. 기존 데이터 백업
+        if service == 'bitwarden':
+            backup_data(service, 'bwdata')
+        else:
+            backup_data(service)
+        
+        # 3. 템플릿 복사
+        copy_template(service)
+
+        # 4. 환경 파일 생성
+        generate_env_file(service)
 
         #5. bitwarden 설치
         if service == "bitwarden":
