@@ -267,7 +267,6 @@ def install_bitwarden() -> bool:
         log_error(f"[install_bitwarden] 예외 발생: {e}")
         return False
 
-
 def bitwarden_start():
     bitwarden_dir = f"{BASE_DIR}/bitwarden"
     bitwarden_script = f"{bitwarden_dir}/bitwarden.sh"
