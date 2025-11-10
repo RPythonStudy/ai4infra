@@ -17,6 +17,7 @@ from datetime import datetime
 import sys
 import os
 import re
+import yaml
 
 from dotenv import load_dotenv
 from common.load_config import load_config
@@ -189,27 +190,75 @@ def copy_template(service: str) -> bool:
         log_error(f"[copy_template] 명령 실패: {e}")
         return False
 
-def generate_env_file(service: str) -> str:
-    template_dir = f"{PROJECT_ROOT}/template/{service}"
-    service_dir = f"{BASE_DIR}/{service}"
+def extract_env_vars(env_path: str, section: str) -> dict:
+    """지정된 섹션(# SECTION) 아래 key=value 쌍을 추출"""
+    section_header = f"# {section.upper()}"
+    env_vars, in_section = {}, False
 
-    # try:
-    #     # subprocess.run(['sudo', 'bash', '-c', f'rm -rf "{service_dir}"/*'], check=True)
-    #     subprocess.run(['sudo', 'cp', '-a', f"{template_dir}/.", service_dir], check=True)
+    with open(env_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                in_section = False
+                continue
+            if line.startswith("#"):
+                in_section = (line == section_header)
+                continue
+            if in_section and "=" in line:
+                k, v = line.split("=", 1)
+                env_vars[k.strip()] = v.strip()
+    return env_vars
 
-    #     # 소유자 설정: 항상 수행하여 소유권 보장
-    #     if service == 'bitwarden':
-    #         owner = 'bitwarden:bitwarden'
-    #     else:
-    #         owner = f"{os.getenv('USER')}:{os.getenv('USER')}"
-    #     subprocess.run(['sudo', 'chown', '-R', owner, service_dir], check=True)
+def extract_config_vars(service: str) -> dict:
+    """./config/{service}.yml 읽고 ${PROJECT_ROOT}, ${BASE_DIR} 치환"""
+    config_path = Path(f"./config/{service}.yml")
+    if not config_path.exists():
+        print(f"[extract_config_vars] 설정 파일 없음: {config_path}")
+        return {}
 
-    #     log_info(f"[prepare_service] {service} 준비 완료: {service_dir}")
-    #     return service_dir
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as e:
+        print(f"[extract_config_vars] YAML 파싱 실패: {e}")
+        return {}
 
-    # except subprocess.CalledProcessError as e:
-    #     log_error(f"[prepare_service] 실패: {e}")
-    #     return ""
+    def sub_vars(v):
+        if isinstance(v, str):
+            return v.replace("${PROJECT_ROOT}", PROJECT_ROOT).replace("${BASE_DIR}", BASE_DIR)
+        if isinstance(v, dict):
+            return {k: sub_vars(val) for k, val in v.items()}
+        if isinstance(v, list):
+            return [sub_vars(val) for val in v]
+        return v
+
+    return sub_vars(data)
+
+
+def generate_env(service: str) -> str:
+    """
+    .env와 config/*.yml에서 변수 추출 후 병합하여
+    BASE_DIR/service/.env.{service} 생성
+    """
+    env_vars = extract_env_vars(".env", service)
+    config_vars = extract_config_vars(service)
+    merged = {**env_vars, **config_vars}
+
+    service_dir = Path(f"{BASE_DIR}/{service}")
+    output_file = service_dir / f".env.{service}"
+
+    if not service_dir.exists():
+        print(f"[generate_env_file] 경로 없음: {service_dir}")
+        return ""
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        for k, v in merged.items():
+            f.write(f"{k}={v}\n")
+
+    print(f"[generate_env_file] {service.upper()} 환경파일 생성 완료 → {output_file}")
+    return str(output_file)
+    
+
+
 
 def install_bitwarden() -> bool:
     """Bitwarden 설치 여부 확인 후 필요 시 수동 설치 안내"""
@@ -288,8 +337,6 @@ def bitwarden_start():
 
     log_info("[bitwarden_start] 사용자가 수동 시작을 수행했다고 표시함 — 자동 재시도 없음")
     return False
-
-
 
 def ensure_network():
     """ai4infra 네트워크 생성 - 극단적 간결 버전"""

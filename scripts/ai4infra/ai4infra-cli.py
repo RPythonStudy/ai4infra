@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 
 # Local imports
 from common.logger import log_debug, log_error, log_info
-from utils.container_manager import create_user, add_sudoer, stop_container, copy_template, generate_env_file, install_bitwarden, ensure_network, start_container, backup_data
+from utils.container_manager import create_user, add_sudoer, stop_container, copy_template, generate_env, install_bitwarden, ensure_network, start_container, backup_data
 from utils.generate_certificates import generate_certificates
 
 load_dotenv()
@@ -72,7 +72,7 @@ def install(service: str = typer.Argument("all", help="설치할 서비스 이�
         copy_template(service)
 
         # 4. 환경 파일 생성
-        generate_env_file(service)
+        generate_env(service)
 
         #5. bitwarden 설치
         if service == "bitwarden":
