@@ -233,7 +233,6 @@ def extract_config_vars(service: str) -> dict:
 
     return sub_vars(data)
 
-
 def generate_env(service: str) -> str:
     """
     .env와 config/*.yml에서 변수 추출 후 병합하여
@@ -257,63 +256,89 @@ def generate_env(service: str) -> str:
     print(f"[generate_env_file] {service.upper()} 환경파일 생성 완료 → {output_file}")
     return str(output_file)
     
-
-
-
 def install_bitwarden() -> bool:
     """Bitwarden 설치 여부 확인 후 필요 시 수동 설치 안내"""
     bitwarden_dir = f"{BASE_DIR}/bitwarden"
     bitwarden_script = f"{bitwarden_dir}/bitwarden.sh"
     compose_file = f"{bitwarden_dir}/bwdata/docker/docker-compose.yml"
+    bwdata_dir = f"{bitwarden_dir}/bwdata"
+    bwdata_tmp = f"{bitwarden_dir}/bwdata.template"
 
     try:
-        # 1️⃣ 설치 여부 점검
+        # 설치 여부 점검
         if Path(bitwarden_script).exists() and Path(compose_file).exists():
             log_info("[install_bitwarden] Bitwarden이 이미 설치되어 있습니다. 다음 단계로 진행합니다.")
             return True
 
-        # 2️⃣ 설치 스크립트 존재 여부 확인
+        # 설치 스크립트 존재 여부 확인
         if not Path(bitwarden_script).exists():
             log_error(f"[install_bitwarden] 설치 스크립트를 찾을 수 없습니다: {bitwarden_script}")
             return False
 
-        # 3️⃣ 설치 스크립트 실행권한 부여
+        # 설치 스크립트 실행권한 부여
         subprocess.run(['sudo', 'chmod', '+x', bitwarden_script], check=True)
 
-        # 4️⃣ 사용자 수동 설치 안내
+        # bitwarden 폴더 전체 권한 bitwarden 계정으로 소유권 변경
+        subprocess.run(['sudo', 'chown', '-R', 'bitwarden:bitwarden', bitwarden_dir], check=False)
+        log_info(f"[install_bitwarden] {bitwarden_dir} 소유권을 bitwarden:bitwarden 으로 변경 완료")
+
+        # ✅ 기존 bwdata 폴더를 임시로 이동 (설치 중 충돌 방지)
+        if Path(bwdata_dir).exists():
+            subprocess.run(['sudo', 'mv', bwdata_dir, bwdata_tmp], check=True)
+            log_info(f"[install_bitwarden] 기존 bwdata 디렉터리를 임시로 이동: {bwdata_tmp}")
+
+        # 사용자 수동 설치 안내
         instructions = (
             "Bitwarden이 설치되어 있지 않습니다.\n\n"
-            "수동 설치 절차를 다른 터미널에서 실행한 뒤, 이 터미널로 돌아와 Enter를 눌러 계속하세요:\n\n"
-            "1) 권장(권한 보존): bitwarden 계정으로 전환하여 설치\n"
-            "   sudo -i -u bitwarden\n"
+            "다른 터미널에서 다음 명령을 bitwarden 계정으로 실행하세요:\n\n"
+            f"   sudo -su bitwarden\n"
             f"   cd {bitwarden_dir}\n"
-            "   sudo ./bitwarden.sh install\n\n"
-            "2) 간단(루트로 직접 실행):\n"
-            f"   sudo {bitwarden_script} install\n\n"
-            "설치 후 파일 소유권이 root로 생성된 경우 소유자 복구:\n"
-            f"   sudo chown -R bitwarden:bitwarden {bitwarden_dir}\n\n"
-            "설치를 완료한 뒤 이 터미널로 돌아와 Enter를 눌러 계속하세요."
+            f"   ./bitwarden.sh install\n\n"
+            "설치가 완료되면 이 터미널로 돌아와 Enter를 눌러 계속합니다.\n"
         )
         log_info(f"[install_bitwarden] 수동 설치 안내:\n{instructions}")
-
         input("설치 완료 후 Enter를 눌러 계속합니다...")
 
-        # 5️⃣ 설치 완료 여부 재확인
+        # ✅ 설치 완료 후 compose 파일 존재 확인
         if Path(compose_file).exists():
             log_info("[install_bitwarden] Bitwarden 설치 완료가 감지되었습니다. 다음 단계로 진행합니다.")
+
+            # ✅ 기존 템플릿의 bwdata 파일 복원 (override 등)
+            if Path(bwdata_tmp).exists():
+                subprocess.run(['sudo', 'cp', '-an', f"{bwdata_tmp}/.", bwdata_dir], check=False)
+                subprocess.run(['sudo', 'rm', '-rf', bwdata_tmp], check=False)
+                log_info(f"[install_bitwarden] 템플릿 bwdata 내용을 설치 결과에 병합 완료")
+
+            # ✅ 소유권 재조정
+            subprocess.run(['sudo', 'chown', '-R', 'bitwarden:bitwarden', bitwarden_dir], check=False)
+            log_info(f"[install_bitwarden] 설치 후 {bitwarden_dir} 소유권 재조정 완료")
+
             return True
         else:
             log_error("[install_bitwarden] 설치 완료가 확인되지 않았습니다. 수동 확인이 필요합니다.")
+            # 실패 시 임시폴더 원복
+            if Path(bwdata_tmp).exists() and not Path(bwdata_dir).exists():
+                subprocess.run(['sudo', 'mv', bwdata_tmp, bwdata_dir], check=False)
+                log_info(f"[install_bitwarden] bwdata 디렉터리를 원래 위치로 복구했습니다.")
             return False
 
     except KeyboardInterrupt:
         log_info("[install_bitwarden] 사용자가 설치 절차를 중단함")
+        # 복구 처리
+        if Path(bwdata_tmp).exists() and not Path(bwdata_dir).exists():
+            subprocess.run(['sudo', 'mv', bwdata_tmp, bwdata_dir], check=False)
         return False
+
     except subprocess.CalledProcessError as e:
         log_error(f"[install_bitwarden] 명령 실패: {e}")
+        if Path(bwdata_tmp).exists() and not Path(bwdata_dir).exists():
+            subprocess.run(['sudo', 'mv', bwdata_tmp, bwdata_dir], check=False)
         return False
+
     except Exception as e:
         log_error(f"[install_bitwarden] 예외 발생: {e}")
+        if Path(bwdata_tmp).exists() and not Path(bwdata_dir).exists():
+            subprocess.run(['sudo', 'mv', bwdata_tmp, bwdata_dir], check=False)
         return False
 
 def bitwarden_start():
@@ -322,7 +347,7 @@ def bitwarden_start():
 
     instructions = (
             "Bitwarden을 수동으로 시작해 주세요 (다른 터미널에서):\n"
-            f"  sudo -i -u bitwarden\n"
+            f"  sudo -su bitwarden\n"
             f"  cd {bitwarden_dir}\n"
             f"  sudo ./bitwarden.sh start\n\n"
             "시작 후 원래 터미널로 돌아와 Enter를 눌러 계속하세요."
@@ -397,3 +422,4 @@ def start_container(service: str):
             log_error(f"[start_container] {service} 시작 실패")
             log_error(f"[start_container] 오류 내용: {result.stderr}")
             log_error(f"[start_container] 출력 내용: {result.stdout}")
+
