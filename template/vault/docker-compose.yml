@@ -10,8 +10,13 @@ services:
       - "${VAULT_PORT:-8200}:8200"
     environment:
       - VAULT_API_ADDR=https://vault:8200
-      - VAULT_ADDR=https://localhost:8200
-    command: ["vault", "server", "-config=/vault/config/vault.hcl"]
+      - VAULT_ADDR=https://localhost:820
+    command: >
+      sh -c "
+        cp /vault/certs/vault.crt /etc/ssl/certs/vault.crt 2>/dev/null || true;
+        cat /vault/certs/vault.crt >> /etc/ssl/certs/ca-certificates.crt 2>/dev/null || true;
+        vault server -config=/vault/config/vault.hcl
+      "
     volumes:
       - ${VAULT_FILE_DIR:-/opt/ai4infra/vault/file}:/vault/file
       - ${VAULT_CERTS_DIR:-/opt/ai4infra/vault/certs}:/vault/certs
@@ -19,7 +24,7 @@ services:
     networks:
       - ai4infra
     healthcheck:
-      test: ["CMD", "wget", "--no-check-certificate", "-qO-", "https://localhost:8200/v1/sys/health"]
+      test: ["CMD", "vault", "status"]
       interval: 30s
       timeout: 10s
       retries: 3

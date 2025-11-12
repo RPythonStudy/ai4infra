@@ -4,5 +4,8 @@ ins-bit:
 ins-pos:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres
 
+ins-vau:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install vault
+
 ins-all:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install all
