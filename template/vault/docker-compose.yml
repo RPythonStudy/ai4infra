@@ -10,7 +10,7 @@ services:
       - "${VAULT_PORT:-8200}:8200"
     environment:
       - VAULT_API_ADDR=https://vault:8200
-      - VAULT_ADDR=https://localhost:820
+      - VAULT_ADDR=https://localhost:8200
     command: >
       sh -c "
         cp /vault/certs/vault.crt /etc/ssl/certs/vault.crt 2>/dev/null || true;
@@ -24,10 +24,11 @@ services:
     networks:
       - ai4infra
     healthcheck:
-      test: ["CMD", "vault", "status"]
+      test: ["CMD", "sh", "-c", "curl -sk https://localhost:8200/v1/sys/health | jq -e '.sealed == false'"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
+
 
 networks:
   ai4infra:

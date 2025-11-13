@@ -34,62 +34,65 @@ SERVICES = ('postgres', 'vault', 'elk', 'ldap', 'bitwarden') # 튜플로 선언�
 
 
 @app.command()
-def install(service: str = typer.Argument("all", help="설치할 서비스 이름")):
+def install(
+    service: str = typer.Argument("all", help="설치할 서비스 이름"),
+    reset: bool = typer.Option(False, "--reset", help="기존 데이터/컨테이너 삭제 후 완전 재설치 (개발용)")
+):
     services = list(SERVICES) if service == "all" else [service]
 
-    # bitwarden 사용자 생성
-    if 'bitwarden' in services:
-        result = create_user(username='bitwarden')
-        if not result:
-            log_error("[install] bitwarden 사용자 생성 실패 — 설치 중단")
-            raise typer.Exit(code=1)
-        result = add_sudoer(username='bitwarden',
-                                  sudoers_line=f"bitwarden ALL=(ALL) NOPASSWD: /usr/bin/docker, {BASE_DIR}/bitwarden/bitwarden.sh")
-        if not result:
-            log_error("[install] bitwarden sudoers 설정 실패 — 설치 중단")
-            raise typer.Exit(code=1)
-
-    # 각 서비스별 처리
-    for service in services:
-
+    for svc in services:
         print("####################################################################################")
-        log_info(f"[install] {service} 설치 시작")
+        log_info(f"[install] {svc} 설치 시작")
 
-        # 1. 컨테이너 중지
-        if service == 'bitwarden':
-            search_pattern = 'bitwarden'
+        service_dir = f"{BASE_DIR}/{svc}"
+
+        # 1) 컨테이너 중지
+        stop_container(f"ai4infra-{svc}" if svc != "bitwarden" else "bitwarden")
+
+        # 2) reset 옵션인 경우 → 컨테이너 + 데이터 제거 (Vault 개발에 필수)
+        if reset:
+            log_info(f"[install] --reset 옵션 감지: {svc} 기존 데이터/컨테이너 제거")
+
+            # 1) 컨테이너 삭제
+            subprocess.run(
+                ["sudo", "docker", "rm", "-f", f"ai4infra-{svc}"],
+                capture_output=True,
+                text=True
+            )
+
+            # 2) 서비스 루트 폴더 전체 삭제
+            #    예: /opt/ai4infra/vault → 전체 삭제
+            subprocess.run(
+                ["sudo", "rm", "-rf", service_dir],
+                capture_output=True,
+                text=True
+            )
+
+            log_info(f"[install] 삭제 완료 → {service_dir}")
+
+
+        # 3) 기존 데이터 백업 (reset=False 인 경우만)
         else:
-            search_pattern = f'ai4infra-{service}'
-        stop_container(search_pattern)
+            if svc == 'bitwarden':
+                backup_data(svc, 'bwdata')
+            else:
+                backup_data(svc)
 
-        # 2. 기존 데이터 백업
-        if service == 'bitwarden':
-            backup_data(service, 'bwdata')
-        else:
-            backup_data(service)
-        
-        # 3. 템플릿 복사
-        copy_template(service)
+        # 4) 템플릿 복사 (멱등)
+        copy_template(svc)
 
-        # 4. 환경 파일 생성
-        generate_env(service)
+        # 5) 환경파일 생성
+        generate_env(svc)
 
-        #5. bitwarden 설치
-        if service == "bitwarden":
-            install_bitwarden()
-        
-        # 6. 인증서 생성 (Vault 프로덕션 모드용)
-        if service == "vault":
-            log_info(f"[install] {service} SSL 인증서 생성 중...")
-            generate_certificates([service], overwrite=False)
+        # 6) Vault 인증서 생성 (reset 여부와 무관)
+        if svc == "vault":
+            generate_certificates(["vault"], overwrite=False)
 
-        # 7. 컨테이너 시작
-        start_container(service)
-        
-        log_info(f"[install] {service} 설치 완료")
-    
-    # 서비스별로 Docker 컨테이너 구동
-    # 8. 서비스별로 헬스체크 확인
+        # 7) 컨테이너 시작
+        start_container(svc)
+
+        log_info(f"[install] {svc} 설치 완료")
+
   
 @app.command()
 def backup(service: str = typer.Argument(..., help="백업할 서비스 (postgres, all)")):
@@ -162,72 +165,133 @@ def cert(
 def init_vault():
     """Vault 프로덕션 모드 초기화 - 첫 실행 시에만"""
     log_info("[init_vault] Vault 초기화 시작")
-    
-    # Vault 컨테이너 상태 확인
-    result = subprocess.run(['sudo', 'docker', 'ps', '--filter', 'name=ai4infra-vault', 
-                           '--format', '{{.Names}}'], capture_output=True, text=True)
-    
+
+    # 1) Vault 컨테이너 실행 확인
+    result = subprocess.run(
+        ['sudo', 'docker', 'ps', '--filter', 'name=ai4infra-vault', '--format', '{{.Names}}'],
+        capture_output=True, text=True
+    )
+
     if 'ai4infra-vault' not in result.stdout:
-        log_error("[init_vault] Vault 컨테이너가 실행되지 않음. 먼저 'install vault' 실행")
+        log_error("[init_vault] Vault 컨테이너가 실행되지 않았습니다. 먼저 'ai4infra install vault' 실행하십시오.")
         return
-    
-    # Vault 초기화 (한 번만)
+
+    # 2) 초기화 안내 메시지
+    print("\n===================================================================")
+    print(" Vault 초기화를 진행합니다.")
+    print(" !!! 아래 출력은 단 한 번만 표시되므로 반드시 저장하십시오 !!!")
+    print("===================================================================\n")
+
+    print("보관 권장사항:")
+    print(" - 출력되는 JSON 전체를 Bitwarden/KeePass 등 암호화 저장소에 보관")
+    print(" - 로컬 PC 텍스트 파일, 메모장, 이메일 저장 금지")
+    print(" - 가능하면 인쇄하여 금고 등에 분산 보관\n")
+
+    print("-------------------------------------------------------------------")
+    print(" Vault operator init 결과(JSON)가 곧 화면에 그대로 출력됩니다.")
+    print("-------------------------------------------------------------------\n")
+
+    # 3) Vault init 실행 (출력을 캡처하지 않음 → 그대로 사용자 터미널로 출력됨)
     init_cmd = [
-        'sudo', 'docker', 'exec', 'ai4infra-vault', 
-        'vault', 'operator', 'init', '-key-shares=1', '-key-threshold=1', '-format=json'
+        'sudo', 'docker', 'exec', '-i', 'ai4infra-vault',
+        'vault', 'operator', 'init',
+        '-key-shares=5',
+        '-key-threshold=3',
+        '-format=json'
     ]
-    
+
     try:
-        result = subprocess.run(init_cmd, capture_output=True, text=True, check=True)
-        init_data = result.stdout
-        
-        # 초기화 정보를 파일로 저장
-        init_file = f"{BASE_DIR}/vault/vault_init.json"
-        subprocess.run(['sudo', 'tee', init_file], input=init_data, text=True, check=True)
-        subprocess.run(['sudo', 'chmod', '600', init_file])
-        
-        log_info(f"[init_vault] Vault 초기화 완료. 키 정보: {init_file}")
-        log_info("[init_vault] 다음 단계: unseal 명령으로 Vault 언씰하세요")
-        
+        # stdout/stderr을 캡처하지 않으므로 Vault의 출력이 그대로 화면에 표시됨
+        subprocess.run(init_cmd, check=True)
+
+        print("\n-------------------------------------------------------------------")
+        print(" 초기화가 정상적으로 완료되었습니다.")
+        print(" 다음 단계:")
+        print("   ai4infra unseal-vault")
+        print("-------------------------------------------------------------------\n")
+
     except subprocess.CalledProcessError as e:
-        if "Vault is already initialized" in e.stderr:
-            log_info("[init_vault] Vault가 이미 초기화됨")
+        if e.stderr and "Vault is already initialized" in e.stderr:
+            log_info("[init_vault] Vault는 이미 초기화되어 있습니다.")
         else:
-            log_error(f"[init_vault] 초기화 실패: {e.stderr}")
+            log_error("[init_vault] 초기화 실패")
+            if e.stderr:
+                print(e.stderr)
+
 
 @app.command()
 def unseal_vault():
-    """Vault 언씰 - 재시작 시마다 필요"""
-    log_info("[unseal_vault] Vault 언씰 시작")
-    
-    init_file = f"{BASE_DIR}/vault/vault_init.json"
-    if not os.path.exists(init_file):
-        log_error("[unseal_vault] 초기화 파일 없음. 먼저 'init-vault' 실행")
-        return
-    
-    # 초기화 파일에서 unseal key 추출
-    result = subprocess.run(['sudo', 'cat', init_file], capture_output=True, text=True)
-    import json
-    init_data = json.loads(result.stdout)
-    unseal_key = init_data['unseal_keys_b64'][0]
-    
-    # Vault 언씰
-    unseal_cmd = [
+    """Vault 언씰 - 사용자가 직접 터미널에서 vault operator unseal 명령을 실행하도록 안내합니다."""
+    log_info("[unseal_vault] Vault 언씰 절차 시작")
+
+    status_cmd = [
         'sudo', 'docker', 'exec', 'ai4infra-vault',
-        'vault', 'operator', 'unseal', unseal_key
+        'vault', 'status', '-format=json'
     ]
-    
+
+    # 1) Vault 상태 확인
     try:
-        subprocess.run(unseal_cmd, check=True, capture_output=True)
-        log_info("[unseal_vault] Vault 언씰 완료")
-        
-        # Root 토큰 정보 표시
-        root_token = init_data['root_token']
-        log_info(f"[unseal_vault] Root 토큰: {root_token}")
-        log_info("[unseal_vault] Vault 웹 UI: https://localhost:8200")
-        
-    except subprocess.CalledProcessError as e:
-        log_error(f"[unseal_vault] 언씰 실패: {e.stderr}")
+        result = subprocess.run(status_cmd, capture_output=True, text=True, check=True)
+        import json
+        status_json = json.loads(result.stdout)
+        initialized = status_json.get("initialized", False)
+        sealed = status_json.get("sealed", True)
+        threshold = status_json.get("t", status_json.get("threshold", 3))
+    except Exception:
+        log_info("[unseal_vault] Vault 상태 확인 실패: sealed 상태일 수 있습니다.")
+        initialized = True
+        sealed = True
+        threshold = 3
+        status_json = {"sealed": True}
+
+    # 2) 초기화 여부 확인
+    if not initialized:
+        log_error("[unseal_vault] Vault가 초기화되지 않았습니다. 먼저 init-vault 실행하십시오.")
+        return
+
+    # 3) 언실 여부 확인
+    if not sealed:
+        log_info("[unseal_vault] Vault는 이미 언실되어 있습니다.")
+        print("Vault UI: https://localhost:8200")
+        return
+
+    print("\n===================================================================")
+    print(" Vault 언실(Unseal) 절차 안내 (수동 방식)")
+    print("===================================================================\n")
+
+    print("Vault는 보안상의 이유로 sealed 상태로 시작합니다.")
+    print(f"이 Vault는 총 {threshold}개의 Unseal Key 중 최소 {threshold}개가 필요합니다.\n")
+
+    print("이제 사용자가 직접 vault operator unseal 명령을 실행해야 합니다.")
+    print("각 키 입력은 반드시 사람이 직접 수행해야 하며, 자동화할 수 없습니다.\n")
+
+    print("-------------------------------------------------------------------")
+    print("  아래 명령을 터미널에 직접 입력하십시오.")
+    print("-------------------------------------------------------------------\n")
+
+    print("1) Vault 컨테이너 내부로 들어가기:")
+    print("   sudo docker exec -it ai4infra-vault /bin/sh\n")
+
+    print("2) Vault 언실 명령 실행:")
+    print("   vault operator unseal\n")
+    print("   → Unseal Key #1 입력")
+    print("   vault operator unseal\n")
+    print("   → Unseal Key #2 입력")
+    print("   vault operator unseal\n")
+    print("   → Unseal Key #3 입력\n")
+
+    print("3) sealed=false 상태가 되면 언실이 완료됩니다.")
+    print("   vault status\n")
+
+    print("\n-------------------------------------------------------------------")
+    print(" Vault 웹 UI:")
+    print("   https://localhost:8200")
+    print("-------------------------------------------------------------------\n")
+
+    log_info("[unseal_vault] 사용자에게 Vault 언실 명령 실행 안내 완료")
+
+
+
 
 
 if __name__ == "__main__":
