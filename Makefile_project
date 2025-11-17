@@ -1,17 +1,29 @@
-ins-bit:
+install-bitwarden:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install bitwarden
 
-ins-pos:
+install-bitwarden--reset:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install bitwarden --reset
+
+install-postgres:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres
 
-ins-vau:
+install-postgres--reset:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres --reset
+
+install-vault:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install vault
 
-ins-all:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install all
+install-vault--reset:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install vault --reset
 
 init-vault:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py init-vault
 
 unseal-vault:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py unseal-vault	
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py unseal-vault
+
+backup-vault:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py backup vault
+
+install-all:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install all

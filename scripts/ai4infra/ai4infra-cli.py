@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 파일명: scripts/ai4infra/ai4infra-cli.py
-목적: ai4infra 통합관리 스크립트 진입점
-기능: 
-- 설치, 설정, 상태 확인 등
+인자: 
+  - install: `서비스명` 또는 `all`를 인자로 하며 아래의 옵션이 있음
+    - default: 컨테이너중단/데이터백업 후 멱등성 설치 
+    -   reset: 컨테이너중단/데이터삭제 후 설치 (개발용)
 변경이력:
-  - 2025-10-04: 최초 구현 (BenKorea)
+  - 2025-11-16: 최초 구현 (BenKorea)
 """
 
 # Standard library imports
@@ -23,7 +24,7 @@ from dotenv import load_dotenv
 
 # Local imports
 from common.logger import log_debug, log_error, log_info
-from utils.container_manager import create_user, add_sudoer, stop_container, copy_template, generate_env, install_bitwarden, ensure_network, start_container, backup_data
+from utils.container_manager import create_user, add_sudoer, stop_container, copy_template, generate_env, install_bitwarden, ensure_network, start_container, backup_data, setup_usb_secrets
 from utils.generate_certificates import generate_certificates
 
 load_dotenv()
@@ -40,27 +41,27 @@ def install(
 ):
     services = list(SERVICES) if service == "all" else [service]
 
+    # Bitwarden 사용자 생성 (bitwarden 서비스 설치 시에만)
+    if 'bitwarden' in services:
+        create_user('bitwarden')
+        add_sudoer('bitwarden', 'bitwarden ALL=(ALL) NOPASSWD: /usr/bin/docker, /opt/ai4infra/bitwarden/bitwarden.sh')
+    
+    # USB 비밀번호 파일 준비 (Vault 설치 시에만)
+    if 'vault' in services:
+        setup_usb_secrets()
+    
     for svc in services:
         print("####################################################################################")
-        log_info(f"[install] {svc} 설치 시작")
-
         service_dir = f"{BASE_DIR}/{svc}"
 
         # 1) 컨테이너 중지
         stop_container(f"ai4infra-{svc}" if svc != "bitwarden" else "bitwarden")
 
-        # 2) reset 옵션인 경우 → 컨테이너 + 데이터 제거 (Vault 개발에 필수)
+        # 2) reset 옵션인 경우 → 컨테이너 + 데이터 제거
         if reset:
-            log_info(f"[install] --reset 옵션 감지: {svc} 기존 데이터/컨테이너 제거")
+            log_info(f"[install] --reset 옵션 감지: {svc} 기존 데이터 제거")
 
-            # 1) 컨테이너 삭제
-            subprocess.run(
-                ["sudo", "docker", "rm", "-f", f"ai4infra-{svc}"],
-                capture_output=True,
-                text=True
-            )
-
-            # 2) 서비스 루트 폴더 전체 삭제
+            # 1) 서비스 루트 폴더 전체 삭제
             #    예: /opt/ai4infra/vault → 전체 삭제
             subprocess.run(
                 ["sudo", "rm", "-rf", service_dir],
@@ -73,10 +74,7 @@ def install(
 
         # 3) 기존 데이터 백업 (reset=False 인 경우만)
         else:
-            if svc == 'bitwarden':
-                backup_data(svc, 'bwdata')
-            else:
-                backup_data(svc)
+            backup_data(svc)  # 서비스 전체 백업 (통일)
 
         # 4) 템플릿 복사 (멱등)
         copy_template(svc)
@@ -88,7 +86,12 @@ def install(
         if svc == "vault":
             generate_certificates(["vault"], overwrite=False)
 
-        # 7) 컨테이너 시작
+        # 7) Bitwarden 설치
+        if svc == "bitwarden":
+            install_bitwarden()
+
+
+        # 8) 컨테이너 시작
         start_container(svc)
 
         log_info(f"[install] {svc} 설치 완료")
@@ -114,31 +117,53 @@ def backup(service: str = typer.Argument(..., help="백업할 서비스 (postgre
 @app.command()
 def restore(
     service: str = typer.Argument(..., help="복원할 서비스"),
-    backup_file: str = typer.Argument(..., help="백업 파일 경로")
+    backup_dir: str = typer.Argument(..., help="백업 디렉터리 경로")
 ):
-    """서비스 데이터 복원 - 극단적 간결 버전"""
-    log_info(f"[restore] {service} 복원 시작: {backup_file}")
+    """서비스 데이터 복원 (전체 복원)
     
-    # 1. 백업 파일 존재 확인
-    if not os.path.exists(backup_file):
-        log_error(f"[restore] 백업 파일 없음: {backup_file}")
+    동작:
+    1. 컨테이너 중지
+    2. 기존 서비스 디렉터리 삭제
+    3. 백업 디렉터리 전체 복원 (데이터 + 설정 + 인증서)
+    4. 소유권 재조정
+    5. 컨테이너 시작
+    
+    사용 예:
+      ai4infra restore vault /opt/ai4infra/backups/vault/vault_20251116_153000
+    """
+    log_info(f"[restore] {service} 복원 시작: {backup_dir}")
+    
+    # 1. 백업 디렉터리 존재 확인
+    if not os.path.exists(backup_dir):
+        log_error(f"[restore] 백업 디렉터리 없음: {backup_dir}")
         return
     
     # 2. 컨테이너 중지
-    stop_container(service)
+    stop_container(f"ai4infra-{service}" if service != "bitwarden" else "bitwarden")
     
-    # 3. 기존 데이터 삭제
-    data_dir = f"{BASE_DIR}/{service}/data"
-    subprocess.run(['sudo', 'rm', '-rf', data_dir])
+    # 3. 기존 서비스 디렉터리 삭제
+    service_dir = f"{BASE_DIR}/{service}"
+    log_info(f"[restore] 기존 데이터 삭제: {service_dir}")
+    subprocess.run(['sudo', 'rm', '-rf', service_dir], check=True)
     
-    # 4. 백업 복원
-    subprocess.run(['sudo', 'tar', '-xzf', backup_file, '-C', f"{BASE_DIR}/{service}"])
-    subprocess.run(['sudo', 'chown', '-R', f"{os.getenv('USER')}:{os.getenv('USER')}", data_dir])
+    # 4. 백업 디렉터리에서 복원 (rsync 사용)
+    subprocess.run(['sudo', 'mkdir', '-p', service_dir], check=True)
+    cmd = ['sudo', 'rsync', '-a', f"{backup_dir}/", f"{service_dir}/"]
+    subprocess.run(cmd, check=True)
+    log_info(f"[restore] 백업 복원 완료: {backup_dir} → {service_dir}")
     
-    # 5. 컨테이너 시작
+    # 5. 소유권 재조정
+    if service == 'bitwarden':
+        subprocess.run(['sudo', 'chown', '-R', 'bitwarden:bitwarden', service_dir], check=True)
+        log_info(f"[restore] 소유권 설정: bitwarden:bitwarden")
+    else:
+        # PostgreSQL, Vault 등은 root 또는 컨테이너 UID 사용
+        log_info(f"[restore] 소유권 유지 (원본 그대로)")
+    
+    # 6. 컨테이너 시작
     start_container(service)
     
-    log_info(f"[restore] {service} 복원 완료: {backup_file}")
+    log_info(f"[restore] {service} 복원 완료")
 
 @app.command()
 def cert(
