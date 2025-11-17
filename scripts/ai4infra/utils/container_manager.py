@@ -269,6 +269,10 @@ def generate_env(service: str) -> str:
     """
     .env와 config/*.yml에서 변수 추출 후 병합하여
     BASE_DIR/service/.env.{service} 생성
+    
+    퍼미션 처리:
+    - sudo로 임시 파일 작성 후 이동
+    - 서비스 사용자 소유권으로 변경 (bitwarden, postgres 등)
     """
     env_vars = extract_env_vars(".env", service)
     config_vars = extract_config_vars(service)
@@ -278,14 +282,50 @@ def generate_env(service: str) -> str:
     output_file = service_dir / f".env"
 
     if not service_dir.exists():
-        log_info(f"[generate_env_file] 경로 없음: {service_dir}")
+        log_info(f"[generate_env] 경로 없음: {service_dir}")
         return ""
 
-    with open(output_file, "w", encoding="utf-8") as f:
+    # 임시 파일에 작성 (일반 사용자 권한)
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as tmp:
         for k, v in merged.items():
-            f.write(f"{k}={v}\n")
-
-    log_info(f"[generate_env_file] {service.upper()} 환경파일 생성 완료 → {output_file}")
+            tmp.write(f"{k}={v}\n")
+        tmp_path = tmp.name
+    
+    try:
+        # sudo로 임시 파일을 목적지로 이동
+        subprocess.run(
+            ['sudo', 'mv', tmp_path, str(output_file)],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        
+        # 서비스 사용자 소유권으로 변경
+        owner = service if service in ('bitwarden', 'postgres') else 'root'
+        subprocess.run(
+            ['sudo', 'chown', f'{owner}:{owner}', str(output_file)],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        
+        # 읽기 전용 권한 (600)
+        subprocess.run(
+            ['sudo', 'chmod', '600', str(output_file)],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        
+        log_info(f"[generate_env] {service.upper()} 환경파일 생성 완료 → {output_file} (소유자: {owner})")
+    except subprocess.CalledProcessError as e:
+        log_error(f"[generate_env] 파일 이동/권한 설정 실패: {e.stderr}")
+        # 임시 파일 정리
+        if Path(tmp_path).exists():
+            os.unlink(tmp_path)
+        return ""
+    
     return str(output_file)
 
 def setup_usb_secrets() -> bool:

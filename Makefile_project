@@ -4,6 +4,9 @@ install-bitwarden:
 install-bitwarden--reset:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install bitwarden --reset
 
+restore-bitwarden:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py restore bitwarden
+
 install-postgres:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres
 

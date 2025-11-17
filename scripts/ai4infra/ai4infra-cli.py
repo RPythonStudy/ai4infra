@@ -122,48 +122,89 @@ def restore(
     """서비스 데이터 복원 (전체 복원)
     
     동작:
-    1. 컨테이너 중지
-    2. 기존 서비스 디렉터리 삭제
-    3. 백업 디렉터리 전체 복원 (데이터 + 설정 + 인증서)
-    4. 소유권 재조정
+    1. 백업 디렉터리 존재 확인
+    2. 컨테이너 중지
+    3. 백업 디렉터리 내용을 서비스 디렉터리로 복원 (덮어쓰기)
+       - 백업에 포함된 파일만 덮어씀 (file/, config/, certs/)
+       - docker-compose.yml, .env는 백업에 없으므로 유지됨
+    4. 소유권 및 권한 재조정
+       - bitwarden: bitwarden:bitwarden 소유, MSSQL 데이터 파일 660 권한
+       - 기타: 원본 소유권 유지
     5. 컨테이너 시작
     
     사용 예:
       ai4infra restore vault /opt/ai4infra/backups/vault/vault_20251116_153000
     """
     log_info(f"[restore] {service} 복원 시작: {backup_dir}")
-    
+
     # 1. 백업 디렉터리 존재 확인
     if not os.path.exists(backup_dir):
         log_error(f"[restore] 백업 디렉터리 없음: {backup_dir}")
         return
-    
+
     # 2. 컨테이너 중지
     stop_container(f"ai4infra-{service}" if service != "bitwarden" else "bitwarden")
-    
-    # 3. 기존 서비스 디렉터리 삭제
+
+    # 3. 백업 디렉터리에서 복원 (덮어쓰기)
+    # 주의: docker-compose.yml, .env는 백업에 없으므로 기존 파일 유지됨
     service_dir = f"{BASE_DIR}/{service}"
-    log_info(f"[restore] 기존 데이터 삭제: {service_dir}")
-    subprocess.run(['sudo', 'rm', '-rf', service_dir], check=True)
-    
-    # 4. 백업 디렉터리에서 복원 (rsync 사용)
-    subprocess.run(['sudo', 'mkdir', '-p', service_dir], check=True)
     cmd = ['sudo', 'rsync', '-a', f"{backup_dir}/", f"{service_dir}/"]
     subprocess.run(cmd, check=True)
-    log_info(f"[restore] 백업 복원 완료: {backup_dir} → {service_dir}")
-    
-    # 5. 소유권 재조정
+    log_info(f"[restore] 백업 복원 완료 (덮어쓰기): {backup_dir} → {service_dir}")
+
+    # 4. 소유권 및 권한 재조정 (비트워든 특화)
     if service == 'bitwarden':
-        subprocess.run(['sudo', 'chown', '-R', 'bitwarden:bitwarden', service_dir], check=True)
-        log_info(f"[restore] 소유권 설정: bitwarden:bitwarden")
+        try:
+            # 4-1. 전체 bwdata는 우선적으로 bitwarden 사용자 소유로 설정
+            subprocess.run(['sudo', 'chown', '-R', 'bitwarden:bitwarden', service_dir], check=True)
+            log_info(f"[restore] 소유권 설정: bitwarden:bitwarden (전체)")
+
+            # 4-2. MSSQL 데이터 파일 경로가 있으면 파일 권한을 보정
+            mssql_data_dir = f"{service_dir}/bwdata/mssql/data"
+            if os.path.exists(mssql_data_dir):
+                # 4-2a. .mdf/.ldf 파일에 660 권한 부여 (소유자+그룹 읽기/쓰기)
+                subprocess.run([
+                    'sudo', 'find', mssql_data_dir, '-type', 'f',
+                    '(', '-name', '*.mdf', '-o', '-name', '*.ldf', ')',
+                    '-exec', 'chmod', '660', '{}', '+'
+                ], check=True, capture_output=True, text=True)
+                log_info(f"[restore] MSSQL 데이터 파일 권한 수정: 660 (rw-rw----)")
+
+                # 4-2b. 만약 docker override에 의해 mssql이 비트워든 사용자(1001)로 실행되지
+                # 않는다면(예: root로 실행), 데이터 파일 소유자를 root로 변경하는 옵션을
+                # 적용할 수 있도록 검사합니다. 우선 docker-compose override 파일을 확인.
+                override_path = f"{service_dir}/bwdata/docker/docker-compose.override.yml"
+                run_as_1001 = False
+                if os.path.exists(override_path):
+                    try:
+                        with open(override_path, 'r', encoding='utf-8') as ox:
+                            ov_text = ox.read()
+                        # 간단 탐색: mssql 섹션에 user: 1001이 포함되어 있는지 확인
+                        if 'mssql' in ov_text and '1001' in ov_text:
+                            run_as_1001 = True
+                    except Exception:
+                        run_as_1001 = False
+
+                # 4-2c. override에 따라 소유권 조정
+                if run_as_1001:
+                    subprocess.run(['sudo', 'chown', '-R', 'bitwarden:bitwarden', mssql_data_dir], check=True)
+                    log_info(f"[restore] MSSQL 데이터 소유자: bitwarden:bitwarden (override detected)")
+                else:
+                    # 기본적으로 MSSQL 컨테이너는 root로 동작하므로 root 소유로 변경
+                    subprocess.run(['sudo', 'chown', '-R', 'root:root', mssql_data_dir], check=True)
+                    log_info(f"[restore] MSSQL 데이터 소유자: root:root (default)")
+
+        except subprocess.CalledProcessError as e:
+            log_error(f"[restore] 권한/소유권 재조정 실패: {e.stderr}")
     else:
-        # PostgreSQL, Vault 등은 root 또는 컨테이너 UID 사용
-        log_info(f"[restore] 소유권 유지 (원본 그대로)")
-    
-    # 6. 컨테이너 시작
+        # PostgreSQL, Vault 등은 원본 소유권을 그대로 두고 넘어갑니다
+        log_info(f"[restore] 소유권 유지 (원본 그대로) for {service}")
+
+    # 5. 컨테이너 시작
     start_container(service)
-    
-    log_info(f"[restore] {service} 복원 완료")
+
+    # 6. (선택) 컨테이너 건강 상태 확인 안내 로그
+    log_info(f"[restore] {service} 복원 완료 - 컨테이너가 정상인지 'docker ps' 및 로그를 확인하세요")
 
 @app.command()
 def cert(
