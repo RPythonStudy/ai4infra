@@ -24,7 +24,19 @@ from dotenv import load_dotenv
 
 # Local imports
 from common.logger import log_debug, log_error, log_info
-from utils.container_manager import create_user, add_sudoer, stop_container, copy_template, generate_env, install_bitwarden, ensure_network, start_container, backup_data, setup_usb_secrets
+from utils.container_manager import (
+    create_user,
+    add_docker_group,
+    stop_container,
+    copy_template,
+    generate_env,
+    install_bitwarden,
+    ensure_network,
+    start_container,
+    backup_data,
+    setup_usb_secrets,
+    apply_override,   # ← 신규 추가
+)
 from utils.generate_certificates import generate_certificates
 
 load_dotenv()
@@ -41,57 +53,55 @@ def install(
 ):
     services = list(SERVICES) if service == "all" else [service]
 
-    # Bitwarden 사용자 생성 (bitwarden 서비스 설치 시에만)
-    if 'bitwarden' in services:
-        create_user('bitwarden')
-        add_sudoer('bitwarden', 'bitwarden ALL=(ALL) NOPASSWD: /usr/bin/docker, /opt/ai4infra/bitwarden/bitwarden.sh')
-    
-    # USB 비밀번호 파일 준비 (Vault 설치 시에만)
-    if 'vault' in services:
+    # Bitwarden 사용자 생성
+    if "bitwarden" in services:
+        create_user("bitwarden")
+        add_docker_group("bitwarden")
+
+    # Vault USB secrets 준비
+    if "vault" in services:
         setup_usb_secrets()
-    
+
     for svc in services:
         print("####################################################################################")
         service_dir = f"{BASE_DIR}/{svc}"
 
         # 1) 컨테이너 중지
-        stop_container(f"ai4infra-{svc}" if svc != "bitwarden" else "bitwarden")
+        stop_container("bitwarden" if svc == "bitwarden" else f"ai4infra-{svc}")
 
-        # 2) reset 옵션인 경우 → 컨테이너 + 데이터 제거
+        # 2) reset 시 → 디렉터리 삭제
         if reset:
-            log_info(f"[install] --reset 옵션 감지: {svc} 기존 데이터 제거")
-
-            # 1) 서비스 루트 폴더 전체 삭제
-            #    예: /opt/ai4infra/vault → 전체 삭제
+            log_info(f"[install] --reset 옵션: {svc} 기존 데이터 삭제 진행")
             subprocess.run(
                 ["sudo", "rm", "-rf", service_dir],
-                capture_output=True,
-                text=True
+                capture_output=True, text=True
             )
+            log_info(f"[install] {service_dir} → 기존데이터 삭제 완료")
 
-            log_info(f"[install] 삭제 완료 → {service_dir}")
-
-
-        # 3) 기존 데이터 백업 (reset=False 인 경우만)
+        # 3) reset=False → 백업
         else:
-            backup_data(svc)  # 서비스 전체 백업 (통일)
+            backup_data(svc)
 
-        # 4) 템플릿 복사 (멱등)
+        # 4) 템플릿 복사
         copy_template(svc)
 
-        # 5) 환경파일 생성
-        generate_env(svc)
-
-        # 6) Vault 인증서 생성 (reset 여부와 무관)
+        # 5) 서비스별 추가 작업 (설치/인증서/override 등)
         if svc == "vault":
             generate_certificates(["vault"], overwrite=False)
 
-        # 7) Bitwarden 설치
         if svc == "bitwarden":
-            install_bitwarden()
+            ok = install_bitwarden()
+            if not ok:
+                log_error("[install] Bitwarden 설치 실패 → skip container start")
+                continue
+            apply_override("bitwarden")
 
+        # 6) 환경파일(.env) 생성 — 서비스를 모두 준비한 뒤
+        env_path = generate_env(svc)
+        if not env_path:
+            log_info(f"[install] {svc}: .env 생성 생략 또는 환경변수 없음")
 
-        # 8) 컨테이너 시작
+        # 7) 컨테이너 시작
         start_container(svc)
 
         log_info(f"[install] {svc} 설치 완료")
@@ -119,92 +129,43 @@ def restore(
     service: str = typer.Argument(..., help="복원할 서비스"),
     backup_dir: str = typer.Argument(..., help="백업 디렉터리 경로")
 ):
-    """서비스 데이터 복원 (전체 복원)
-    
-    동작:
-    1. 백업 디렉터리 존재 확인
-    2. 컨테이너 중지
-    3. 백업 디렉터리 내용을 서비스 디렉터리로 복원 (덮어쓰기)
-       - 백업에 포함된 파일만 덮어씀 (file/, config/, certs/)
-       - docker-compose.yml, .env는 백업에 없으므로 유지됨
-    4. 소유권 및 권한 재조정
-       - bitwarden: bitwarden:bitwarden 소유, MSSQL 데이터 파일 660 권한
-       - 기타: 원본 소유권 유지
-    5. 컨테이너 시작
-    
-    사용 예:
-      ai4infra restore vault /opt/ai4infra/backups/vault/vault_20251116_153000
+    """
+    AI4INFRA 서비스 복원 (백업 시점의 권한/소유권 그대로 복구)
+
+    절차:
+      1) 백업 디렉터리 존재 확인
+      2) 컨테이너 중지
+      3) rsync -a --numeric-ids 로 완전 복원
+      4) generate_env() 재생성
+      5) start_container()
     """
     log_info(f"[restore] {service} 복원 시작: {backup_dir}")
 
-    # 1. 백업 디렉터리 존재 확인
+    # 1) 백업 디렉터리 확인
     if not os.path.exists(backup_dir):
         log_error(f"[restore] 백업 디렉터리 없음: {backup_dir}")
         return
 
-    # 2. 컨테이너 중지
-    stop_container(f"ai4infra-{service}" if service != "bitwarden" else "bitwarden")
+    # 2) 컨테이너 중지
+    stop_container("bitwarden" if service == "bitwarden" else f"ai4infra-{service}")
 
-    # 3. 백업 디렉터리에서 복원 (덮어쓰기)
-    # 주의: docker-compose.yml, .env는 백업에 없으므로 기존 파일 유지됨
+    # 3) rsync로 백업 그대로 복원 (권한/소유자 포함)
     service_dir = f"{BASE_DIR}/{service}"
-    cmd = ['sudo', 'rsync', '-a', f"{backup_dir}/", f"{service_dir}/"]
+    cmd = ['sudo', 'rsync', '-a', '--numeric-ids', f"{backup_dir}/", f"{service_dir}/"]
     subprocess.run(cmd, check=True)
-    log_info(f"[restore] 백업 복원 완료 (덮어쓰기): {backup_dir} → {service_dir}")
+    log_info(f"[restore] 복원 완료 (권한 포함 그대로): {backup_dir} → {service_dir}")
 
-    # 4. 소유권 및 권한 재조정 (비트워든 특화)
-    if service == 'bitwarden':
-        try:
-            # 4-1. 전체 bwdata는 우선적으로 bitwarden 사용자 소유로 설정
-            subprocess.run(['sudo', 'chown', '-R', 'bitwarden:bitwarden', service_dir], check=True)
-            log_info(f"[restore] 소유권 설정: bitwarden:bitwarden (전체)")
-
-            # 4-2. MSSQL 데이터 파일 경로가 있으면 파일 권한을 보정
-            mssql_data_dir = f"{service_dir}/bwdata/mssql/data"
-            if os.path.exists(mssql_data_dir):
-                # 4-2a. .mdf/.ldf 파일에 660 권한 부여 (소유자+그룹 읽기/쓰기)
-                subprocess.run([
-                    'sudo', 'find', mssql_data_dir, '-type', 'f',
-                    '(', '-name', '*.mdf', '-o', '-name', '*.ldf', ')',
-                    '-exec', 'chmod', '660', '{}', '+'
-                ], check=True, capture_output=True, text=True)
-                log_info(f"[restore] MSSQL 데이터 파일 권한 수정: 660 (rw-rw----)")
-
-                # 4-2b. 만약 docker override에 의해 mssql이 비트워든 사용자(1001)로 실행되지
-                # 않는다면(예: root로 실행), 데이터 파일 소유자를 root로 변경하는 옵션을
-                # 적용할 수 있도록 검사합니다. 우선 docker-compose override 파일을 확인.
-                override_path = f"{service_dir}/bwdata/docker/docker-compose.override.yml"
-                run_as_1001 = False
-                if os.path.exists(override_path):
-                    try:
-                        with open(override_path, 'r', encoding='utf-8') as ox:
-                            ov_text = ox.read()
-                        # 간단 탐색: mssql 섹션에 user: 1001이 포함되어 있는지 확인
-                        if 'mssql' in ov_text and '1001' in ov_text:
-                            run_as_1001 = True
-                    except Exception:
-                        run_as_1001 = False
-
-                # 4-2c. override에 따라 소유권 조정
-                if run_as_1001:
-                    subprocess.run(['sudo', 'chown', '-R', 'bitwarden:bitwarden', mssql_data_dir], check=True)
-                    log_info(f"[restore] MSSQL 데이터 소유자: bitwarden:bitwarden (override detected)")
-                else:
-                    # 기본적으로 MSSQL 컨테이너는 root로 동작하므로 root 소유로 변경
-                    subprocess.run(['sudo', 'chown', '-R', 'root:root', mssql_data_dir], check=True)
-                    log_info(f"[restore] MSSQL 데이터 소유자: root:root (default)")
-
-        except subprocess.CalledProcessError as e:
-            log_error(f"[restore] 권한/소유권 재조정 실패: {e.stderr}")
+    # 4) 환경파일(.env) 재생성
+    env_path = generate_env(service)
+    if env_path:
+        log_info(f"[restore] {service}: .env 재생성 완료 → {env_path}")
     else:
-        # PostgreSQL, Vault 등은 원본 소유권을 그대로 두고 넘어갑니다
-        log_info(f"[restore] 소유권 유지 (원본 그대로) for {service}")
+        log_info(f"[restore] {service}: .env 생성 생략")
 
-    # 5. 컨테이너 시작
+    # 5) 컨테이너 재시작
     start_container(service)
+    log_info(f"[restore] {service} 복원 완료")
 
-    # 6. (선택) 컨테이너 건강 상태 확인 안내 로그
-    log_info(f"[restore] {service} 복원 완료 - 컨테이너가 정상인지 'docker ps' 및 로그를 확인하세요")
 
 @app.command()
 def cert(
