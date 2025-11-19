@@ -99,12 +99,23 @@ def create_user(username: str, password: str = "bit") -> bool:
         return False
 
 def add_docker_group(user: str):
+    """사용자를 docker 그룹에 추가 (이미 속해 있으면 건너뜀)"""
     try:
+        # 현재 그룹 확인
+        cmd = ['groups', user]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        current_groups = result.stdout.strip()
+        
+        if 'docker' in current_groups.split():
+            log_info(f"[add_docker_group] {user} 사용자가 이미 docker 그룹에 속해 있습니다.")
+            return True
+        
+        # docker 그룹에 추가
         subprocess.run(['sudo', 'usermod', '-aG', 'docker', user], check=True)
         log_info(f"[add_docker_group] {user} 사용자를 docker 그룹에 추가했습니다.")
         return True
     except subprocess.CalledProcessError as e:
-        log_error(f"[add_docker_group] 실패: {e.stderr}")
+        log_error(f"[add_docker_group] 실패: {e.stderr if e.stderr else str(e)}")
         return False
 
 def stop_container(search_pattern: str) -> bool:
@@ -232,8 +243,6 @@ def copy_template(service: str) -> bool:
         log_error(f"[copy_template] 실패: {e.stderr}")
         return False
 
-
-
 def extract_env_vars(env_path: str, section: str) -> dict:
     """지정된 섹션(# SECTION) 아래 key=value 쌍을 추출"""
     section_header = f"# {section.upper()}"
@@ -352,7 +361,6 @@ def generate_env(service: str) -> str:
 
     return str(output_file)
 
-
 def setup_usb_secrets() -> bool:
     """USB 경로에 암호화된 비밀번호 파일 배포
     
@@ -432,7 +440,7 @@ def install_bitwarden() -> bool:
     # 2) 사용자에게 설치 안내 (설치스크립트 존재 여부는 체크하지 않음)
     instructions = (
         "Bitwarden이 설치되어 있지 않으므로 수동설치를 진행하세요.\n\n"
-        "다른 터미널에서 bitwarden 사용자로 다음 명령을 실행해 설치하십시오:\n\n"
+        "다른 터미널에서 다음 명령을 실행해 설치하십시오:\n\n"
         f"   sudo -su bitwarden\n"
         f"   cd {bitwarden_dir}\n"
         f"   ./bitwarden.sh install\n\n"
@@ -448,7 +456,6 @@ def install_bitwarden() -> bool:
     else:
         log_error("[install_bitwarden] 설치가 완료되지 않았습니다. 수동 확인이 필요합니다.")
         return False
-
 
 def apply_override(service: str) -> bool:
     """
@@ -498,16 +505,13 @@ def apply_override(service: str) -> bool:
         log_error(f"[apply_override] override 적용 실패: {e.stderr}")
         return False
 
-
-
 def bitwarden_start():
     bitwarden_dir = f"{BASE_DIR}/bitwarden"
     bitwarden_script = f"{bitwarden_dir}/bitwarden.sh"
 
     instructions = (
-        "Bitwarden을 수동으로 시작해 주세요 (설치 시와 같은 터미널에서):\n"
-        f"  ./bitwarden.sh start\n\n"
-        "시작 후 원래 터미널로 돌아와 Enter를 눌러 계속하세요."
+        "Bitwarden 계정에서 설치폴더에서 다음 명령어로 수동 시작하세요:\n\n"
+        f"   ./bitwarden.sh start\n"
     )
     log_info(f"[bitwarden_start] 수동 시작 안내:\n{instructions}")
 
@@ -517,9 +521,8 @@ def bitwarden_start():
         log_info("[bitwarden_start] 사용자가 중단함")
         return False
 
-    log_info("[bitwarden_start] 사용자가 Bitwarden을 수동으로 시작했다고 보고함")
+    log_info("[bitwarden_start] Enter 키가 입력 되었으며 다음 단계로 진행합니다.")
     return True
-
 
 def ensure_network():
     """ai4infra 네트워크 생성 - 극단적 간결 버전"""

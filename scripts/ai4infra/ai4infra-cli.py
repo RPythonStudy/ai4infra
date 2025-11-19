@@ -67,7 +67,7 @@ def install(
         service_dir = f"{BASE_DIR}/{svc}"
 
         # 1) 컨테이너 중지
-        stop_container("bitwarden" if svc == "bitwarden" else f"ai4infra-{svc}")
+        stop_container(f"ai4infra-{svc}")
 
         # 2) reset 시 → 디렉터리 삭제
         if reset:
@@ -109,15 +109,22 @@ def install(
   
 @app.command()
 def backup(service: str = typer.Argument(..., help="백업할 서비스 (postgres, all)")):
-    """서비스 데이터 백업"""
+    """서비스 데이터 백업 (컨테이너 중지 → 백업 → 재시작)"""
     services = list(SERVICES) if service == "all" else [service]
     
     backup_files = []
     for svc in services:
         if svc in SERVICES:
+            # 1) 컨테이너 중지
+            stop_container(f"ai4infra-{svc}")
+            
+            # 2) 백업 수행
             backup_file = backup_data(svc)
             if backup_file:
                 backup_files.append(backup_file)
+            
+            # 3) 컨테이너 재시작
+            start_container(svc)
     
     if backup_files:
         log_info(f"[backup] {len(backup_files)}개 백업 완료")
@@ -127,42 +134,66 @@ def backup(service: str = typer.Argument(..., help="백업할 서비스 (postgre
 @app.command()
 def restore(
     service: str = typer.Argument(..., help="복원할 서비스"),
-    backup_dir: str = typer.Argument(..., help="백업 디렉터리 경로")
+    backup_dir: str = typer.Argument(None, help="백업 디렉터리 경로 (생략 시 최신 백업 자동 선택)")
 ):
     """
     AI4INFRA 서비스 복원 (백업 시점의 권한/소유권 그대로 복구)
 
     절차:
-      1) 백업 디렉터리 존재 확인
+      1) 백업 디렉터리 확인 (미지정 시 최신 백업 자동 선택)
       2) 컨테이너 중지
       3) rsync -a --numeric-ids 로 완전 복원
       4) generate_env() 재생성
       5) start_container()
     """
+    
+    # 1) 백업 디렉터리 결정
+    if backup_dir is None:
+        # 최신 백업 자동 선택
+        backups_root = f"{BASE_DIR}/backups/{service}"
+        if not os.path.exists(backups_root):
+            log_error(f"[restore] 백업 디렉터리 없음: {backups_root}")
+            return
+        
+        # 서비스명_타임스탬프 형식의 디렉터리 찾기
+        backup_dirs = [
+            d for d in os.listdir(backups_root)
+            if os.path.isdir(os.path.join(backups_root, d)) and d.startswith(f"{service}_")
+        ]
+        
+        if not backup_dirs:
+            log_error(f"[restore] {service} 백업 없음: {backups_root}")
+            return
+        
+        # 타임스탬프 기준 정렬 (최신순)
+        backup_dirs.sort(reverse=True)
+        backup_dir = os.path.join(backups_root, backup_dirs[0])
+        log_info(f"[restore] 최신 백업 자동 선택: {backup_dir}")
+    
     log_info(f"[restore] {service} 복원 시작: {backup_dir}")
-
-    # 1) 백업 디렉터리 확인
+    
+    # 2) 백업 디렉터리 존재 확인
     if not os.path.exists(backup_dir):
         log_error(f"[restore] 백업 디렉터리 없음: {backup_dir}")
         return
 
-    # 2) 컨테이너 중지
-    stop_container("bitwarden" if service == "bitwarden" else f"ai4infra-{service}")
+    # 3) 컨테이너 중지
+    stop_container(f"ai4infra-{service}")
 
-    # 3) rsync로 백업 그대로 복원 (권한/소유자 포함)
+    # 4) rsync로 백업 그대로 복원 (권한/소유자 포함)
     service_dir = f"{BASE_DIR}/{service}"
     cmd = ['sudo', 'rsync', '-a', '--numeric-ids', f"{backup_dir}/", f"{service_dir}/"]
     subprocess.run(cmd, check=True)
     log_info(f"[restore] 복원 완료 (권한 포함 그대로): {backup_dir} → {service_dir}")
 
-    # 4) 환경파일(.env) 재생성
+    # 5) 환경파일(.env) 재생성
     env_path = generate_env(service)
     if env_path:
         log_info(f"[restore] {service}: .env 재생성 완료 → {env_path}")
     else:
         log_info(f"[restore] {service}: .env 생성 생략")
 
-    # 5) 컨테이너 재시작
+    # 6) 컨테이너 재시작
     start_container(service)
     log_info(f"[restore] {service} 복원 완료")
 
