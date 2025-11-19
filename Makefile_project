@@ -31,5 +31,8 @@ unseal-vault:
 backup-vault:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py backup vault
 
+restore-vault:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py restore vault
+
 install-all:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install all
