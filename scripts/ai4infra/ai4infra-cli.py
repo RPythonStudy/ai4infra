@@ -58,65 +58,6 @@ def install(
     """
     AI4INFRA 서비스 설치 절차 (리팩토링 버전)
 
-    절차:
-      1) 컨테이너 중지
-      2) reset 시 기존 디렉터리 삭제 / reset=False 시 백업
-      3) 템플릿 복사
-      4) 서비스별 사전 준비 (bitwarden 설치, override 등)
-      5) Root CA 생성 (최초 1회)
-      6) 서비스별 인증서 생성 (create_service_certificate)
-      7) 환경파일(.env) 생성
-      8) 컨테이너 시작
-    """
-
-    services = list(SERVICES) if service == "all" else [service]
-
-    # Bitwarden 계정이 필요한 경우
-    if "bitwarden" in services:
-        create_user("bitwarden")
-        add_docker_group("bitwarden")
-
-    # Vault USB secrets 준비 (언실 자동화 대비)
-    if "vault" in services:
-        setup_usb_secrets()
-
-    # Root CA 생성 (한 번만 실행)
-    generate_root_ca_if_needed()
-
-    for svc in services:
-        print("####################################################################################")
-        service_dir = f"{BASE_DIR}/{svc}"
-
-        # 1) 컨테이너 중지
-        stop_container(f"ai4infra-{svc}")
-
-        # 2) reset 처리
-        if reset:
-            log_info(f"[install] --reset 옵션: {svc} 기존 데이터 삭제 진행")
-            subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
-            log_info(f"[install] 삭제 완료: {service_dir}")
-        else:
-            backup_data(svc)
-
-        # 3) 템플릿 복사
-        copy_template(svc)
-
-        # 4) 서비스별 사전 단계 수행
-        if svc == "bitwarden":
-            ok = install_bitwarden()  # bitwarden.sh install
-            if not ok:
-                log_error("[install] Bitwarden 설치 실패 → skip")
-                continue
-            apply_override("bitwarden")
-
-@app.command()
-def install(
-    service: str = typer.Argument("all", help="설치할 서비스 이름"),
-    reset: bool = typer.Option(False, "--reset", help="기존 데이터/컨테이너 삭제 후 완전 재설치 (개발용)")
-):
-    """
-    AI4INFRA 서비스 설치 절차 (리팩토링 버전)
-
     단계:
       1) 컨테이너 중지
       2) reset 시 기존 데이터 삭제 / reset=False 시 백업

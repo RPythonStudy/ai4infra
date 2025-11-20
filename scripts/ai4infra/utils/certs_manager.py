@@ -29,18 +29,16 @@ AI4INFRA 인증서 관리 모듈 (리팩터링 버전)
 """
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Dict
 
 from dotenv import load_dotenv
 from common.logger import log_info, log_warn, log_error
 
 
 # -------------------------------------------------------------------
-# 환경변수 로딩
+# 환경변수 및 상수
 # -------------------------------------------------------------------
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
@@ -48,6 +46,9 @@ BASE_DIR = os.getenv("BASE_DIR", "/opt/ai4infra")
 
 if not BASE_DIR:
     log_warn("[certs_manager] BASE_DIR 환경변수를 찾을 수 없습니다.")
+
+# Bitwarden 고정 도메인
+BITWARDEN_DOMAIN = "bitwarden.ai4infra.internal"
 
 
 # -------------------------------------------------------------------
@@ -165,28 +166,45 @@ def verify_root_ca() -> bool:
 # -------------------------------------------------------------------
 def build_default_san(service: str) -> str:
     """
-    서비스 이름을 기반으로 기본 SAN(subjectAltName) 문자열 생성
-    - DNS:localhost
-    - IP:127.0.0.1
-    - DNS:{service}
-    - DNS:ai4infra-{service}
-    - DNS:{hostname}
+    서비스 이름 기반 SAN(subjectAltName) 자동 생성
+    - 모든 서비스에 대해 localhost / 127.0.0.1 / 서비스명 / ai4infra-서비스명 포함
+    - Bitwarden은 내부 도메인(bitwarden.ai4infra.internal) 및 관련 FQDN 추가
     """
-    entries = {
-        "DNS:localhost",
-        "IP:127.0.0.1",
-        f"DNS:{service}",
-        f"DNS:ai4infra-{service}",
-    }
+    san_entries: set[str] = set()
 
+    # 공통 SAN
+    san_entries.update(
+        [
+            "DNS:localhost",
+            "IP:127.0.0.1",
+            f"DNS:{service}",
+            f"DNS:ai4infra-{service}",
+        ]
+    )
+
+    # 호스트명 추가
     try:
         hostname = os.uname().nodename
         if hostname:
-            entries.add(f"DNS:{hostname}")
+            san_entries.add(f"DNS:{hostname}")
     except Exception:
         pass
 
-    return ",".join(sorted(entries))
+    # Bitwarden 전용 SAN
+    if service == "bitwarden":
+        san_entries.update(
+            [
+                f"DNS:{BITWARDEN_DOMAIN}",
+                "DNS:bitwarden",
+                "DNS:web.ai4infra.internal",
+                "DNS:api.ai4infra.internal",
+                "DNS:identity.ai4infra.internal",
+                "DNS:nginx",
+            ]
+        )
+
+    # 정렬 후 comma-join
+    return ",".join(sorted(san_entries))
 
 
 # -------------------------------------------------------------------
@@ -247,7 +265,7 @@ def sign_service_cert_with_ca(
         log_error("[sign_service_cert_with_ca] Root CA가 먼저 생성되어야 합니다.")
         return False
 
-    tmp_path = None
+    tmp_path: str | None = None
     try:
         # SAN 설정용 임시 파일 작성
         with NamedTemporaryFile("w", delete=False) as tmp:
@@ -317,38 +335,35 @@ def verify_service_cert(service: str, cert_path: Path) -> bool:
 # -------------------------------------------------------------------
 # 서비스별 인증서 경로 계산
 # -------------------------------------------------------------------
-def get_service_cert_paths(service: str) -> Dict[str, Path]:
+def get_service_cert_paths(service: str) -> dict:
     """
-    서비스별 인증서 경로를 반환한다.
+    서비스별 인증서/키/CA 파일 경로를 반환한다.
 
-    공통 규칙:
-      - key 파일명: private.key
-      - cert 파일명: certificate.crt
-      - CSR 파일명: {service}.csr
+    Bitwarden:
+      - 호스트: {BASE_DIR}/bitwarden/bwdata/ssl/bitwarden.ai4infra.internal/
+      - 컨테이너: /etc/ssl/bitwarden.ai4infra.internal/...
 
-    Bitwarden 전용 규칙:
-      - 디렉터리: {BASE_DIR}/bitwarden/bwdata/nginx/ssl
-      - Root CA 파일명: ca.crt (전역 rootCA.pem 복사본)
+    기타 서비스:
+      - {BASE_DIR}/{service}/certs/ 이하
     """
     base = BASE_DIR
 
-    # Bitwarden 전용 경로 (공식 구조 기준)
     if service == "bitwarden":
-        certs_dir = Path(f"{base}/bitwarden/bwdata/nginx/ssl")
+        certs_dir = Path(f"{base}/bitwarden/bwdata/ssl/{BITWARDEN_DOMAIN}")
         return {
             "certs_dir": certs_dir,
             "key": certs_dir / "private.key",
-            "csr": certs_dir / "bitwarden.csr",
+            "csr": certs_dir / "certificate.csr",
             "cert": certs_dir / "certificate.crt",
             "ca": certs_dir / "ca.crt",
         }
 
-    # 일반 서비스 기본 구조
+    # 그 외 서비스 (vault, postgres, ldap, elk 등)
     certs_dir = Path(f"{base}/{service}/certs")
     return {
         "certs_dir": certs_dir,
         "key": certs_dir / "private.key",
-        "csr": certs_dir / f"{service}.csr",
+        "csr": certs_dir / "certificate.csr",
         "cert": certs_dir / "certificate.crt",
         "ca": certs_dir / "rootCA.crt",
     }
@@ -408,7 +423,7 @@ def fix_bitwarden_cert_permissions() -> None:
     - private.key: 600
     - certificate.crt, ca.crt: 644
     """
-    ssl_dir = f"{BASE_DIR}/bitwarden/bwdata/nginx/ssl"
+    ssl_dir = f"{BASE_DIR}/bitwarden/bwdata/ssl/{BITWARDEN_DOMAIN}"
 
     try:
         subprocess.run(
@@ -416,15 +431,20 @@ def fix_bitwarden_cert_permissions() -> None:
             check=True,
         )
         subprocess.run(
-            ["sudo", "chmod", "600", f"{ssl_dir}/private.key"], check=False
+            ["sudo", "chmod", "600", f"{ssl_dir}/private.key"],
+            check=False,
         )
         subprocess.run(
-            ["sudo", "chmod", "644", f"{ssl_dir}/certificate.crt"], check=False
+            ["sudo", "chmod", "644", f"{ssl_dir}/certificate.crt"],
+            check=False,
         )
         subprocess.run(
-            ["sudo", "chmod", "644", f"{ssl_dir}/ca.crt"], check=False
+            ["sudo", "chmod", "644", f"{ssl_dir}/ca.crt"],
+            check=False,
         )
+
         log_info("[fix_bitwarden_cert_permissions] Bitwarden cert 권한 정리 완료")
+
     except subprocess.CalledProcessError as e:
         log_error(f"[fix_bitwarden_cert_permissions] 실패: {e}")
 
