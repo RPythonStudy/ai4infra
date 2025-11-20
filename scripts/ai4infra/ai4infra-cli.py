@@ -31,13 +31,17 @@ from utils.container_manager import (
     copy_template,
     generate_env,
     install_bitwarden,
-    ensure_network,
     start_container,
     backup_data,
     setup_usb_secrets,
-    apply_override,   # ← 신규 추가
+    apply_override,
 )
-from utils.generate_certificates import generate_certificates
+from utils.certs_manager import (
+    generate_root_ca_if_needed,
+    get_service_cert_paths,
+    create_service_certificate,
+    fix_bitwarden_cert_permissions,
+)
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
@@ -51,16 +55,33 @@ def install(
     service: str = typer.Argument("all", help="설치할 서비스 이름"),
     reset: bool = typer.Option(False, "--reset", help="기존 데이터/컨테이너 삭제 후 완전 재설치 (개발용)")
 ):
+    """
+    AI4INFRA 서비스 설치 절차 (리팩토링 버전)
+
+    절차:
+      1) 컨테이너 중지
+      2) reset 시 기존 디렉터리 삭제 / reset=False 시 백업
+      3) 템플릿 복사
+      4) 서비스별 사전 준비 (bitwarden 설치, override 등)
+      5) Root CA 생성 (최초 1회)
+      6) 서비스별 인증서 생성 (create_service_certificate)
+      7) 환경파일(.env) 생성
+      8) 컨테이너 시작
+    """
+
     services = list(SERVICES) if service == "all" else [service]
 
-    # Bitwarden 사용자 생성
+    # Bitwarden 계정이 필요한 경우
     if "bitwarden" in services:
         create_user("bitwarden")
         add_docker_group("bitwarden")
 
-    # Vault USB secrets 준비
+    # Vault USB secrets 준비 (언실 자동화 대비)
     if "vault" in services:
         setup_usb_secrets()
+
+    # Root CA 생성 (한 번만 실행)
+    generate_root_ca_if_needed()
 
     for svc in services:
         print("####################################################################################")
@@ -69,42 +90,119 @@ def install(
         # 1) 컨테이너 중지
         stop_container(f"ai4infra-{svc}")
 
-        # 2) reset 시 → 디렉터리 삭제
+        # 2) reset 처리
         if reset:
             log_info(f"[install] --reset 옵션: {svc} 기존 데이터 삭제 진행")
-            subprocess.run(
-                ["sudo", "rm", "-rf", service_dir],
-                capture_output=True, text=True
-            )
-            log_info(f"[install] {service_dir} → 기존데이터 삭제 완료")
-
-        # 3) reset=False → 백업
+            subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
+            log_info(f"[install] 삭제 완료: {service_dir}")
         else:
             backup_data(svc)
 
-        # 4) 템플릿 복사
+        # 3) 템플릿 복사
         copy_template(svc)
 
-        # 5) 서비스별 추가 작업 (설치/인증서/override 등)
-        if svc == "vault":
-            generate_certificates(["vault"], overwrite=False)
-
+        # 4) 서비스별 사전 단계 수행
         if svc == "bitwarden":
-            ok = install_bitwarden()
+            ok = install_bitwarden()  # bitwarden.sh install
             if not ok:
-                log_error("[install] Bitwarden 설치 실패 → skip container start")
+                log_error("[install] Bitwarden 설치 실패 → skip")
                 continue
             apply_override("bitwarden")
 
-        # 6) 환경파일(.env) 생성 — 서비스를 모두 준비한 뒤
+@app.command()
+def install(
+    service: str = typer.Argument("all", help="설치할 서비스 이름"),
+    reset: bool = typer.Option(False, "--reset", help="기존 데이터/컨테이너 삭제 후 완전 재설치 (개발용)")
+):
+    """
+    AI4INFRA 서비스 설치 절차 (리팩토링 버전)
+
+    단계:
+      1) 컨테이너 중지
+      2) reset 시 기존 데이터 삭제 / reset=False 시 백업
+      3) 템플릿 복사
+      4) 서비스별 사전 준비 (bitwarden 설치 등)
+      5) Root CA 생성
+      6) 서비스별 인증서 생성 (create_service_certificate)
+      7) 환경파일(.env) 생성
+      8) 컨테이너 시작
+    """
+
+    services = list(SERVICES) if service == "all" else [service]
+
+    # ---------------------------------------------------------
+    # Bitwarden 계정 생성 필요 시
+    # ---------------------------------------------------------
+    if "bitwarden" in services:
+        create_user("bitwarden")
+        add_docker_group("bitwarden")
+
+    # ---------------------------------------------------------
+    # Vault 관련 USB secrets 사전 준비
+    # ---------------------------------------------------------
+    if "vault" in services:
+        setup_usb_secrets()
+
+    # ---------------------------------------------------------
+    # Root CA 생성 (최초 1회)
+    # ---------------------------------------------------------
+    generate_root_ca_if_needed()
+
+    # ---------------------------------------------------------
+    # 각 서비스 설치 처리
+    # ---------------------------------------------------------
+    for svc in services:
+        print("####################################################################################")
+        service_dir = f"{BASE_DIR}/{svc}"
+
+        # 1) 컨테이너 중지
+        stop_container(f"ai4infra-{svc}")
+
+        # 2) reset 처리
+        if reset:
+            log_info(f"[install] --reset 옵션: {svc} 기존 데이터 삭제 진행")
+            subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
+            log_info(f"[install] 삭제 완료: {service_dir}")
+        else:
+            backup_data(svc)
+
+        # 3) 템플릿 복사
+        copy_template(svc)
+
+        # 4) Bitwarden 설치 단계
+        if svc == "bitwarden":
+            ok = install_bitwarden()
+            if not ok:
+                log_error("[install] Bitwarden 설치 실패 → skip")
+                continue
+            apply_override("bitwarden")
+
+        # ---------------------------------------------------------
+        # 5) 서비스별 인증서 생성 (리팩터링된 certs_manager API)
+        # ---------------------------------------------------------
+        create_service_certificate(
+            service=svc,
+            overwrite=False,
+            san=None  # 기본 SAN 자동 생성
+        )
+
+        # (중요) Bitwarden cert 권한은 certs_manager 내부에서 자동 처리되므로
+        # 별도의 fix_bitwarden_cert_permissions() 호출 불필요
+
+        # ---------------------------------------------------------
+        # 6) 환경파일 생성 (.env)
+        # ---------------------------------------------------------
         env_path = generate_env(svc)
         if not env_path:
-            log_info(f"[install] {svc}: .env 생성 생략 또는 환경변수 없음")
+            log_info(f"[install] {svc}: .env 생성 생략")
 
+        # ---------------------------------------------------------
         # 7) 컨테이너 시작
+        # ---------------------------------------------------------
         start_container(svc)
 
         log_info(f"[install] {svc} 설치 완료")
+
 
   
 @app.command()
