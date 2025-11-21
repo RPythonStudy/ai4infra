@@ -14,14 +14,16 @@ from pathlib import Path
 from typing import List, Callable, Optional
 from datetime import datetime
 
+import json
 import sys
 import os
 import re
+import time
 import yaml
 
 from dotenv import load_dotenv
 from common.load_config import load_config
-from common.logger import log_debug, log_error, log_info
+from common.logger import log_debug, log_error, log_info, log_warn
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
@@ -585,4 +587,205 @@ def start_container(service: str):
             log_error(f"[start_container] {service} 시작 실패")
             log_error(f"[start_container] 오류 내용: {result.stderr}")
             log_error(f"[start_container] 출력 내용: {result.stdout}")
+
+
+def check_container(service: str, custom_check=None) -> bool:
+    """
+    AI4INFRA 간결 체크 버전
+    - Bitwarden: ai4infra-bitwarden-* 모든 컨테이너 health 종합 판단
+    - Vault:    health 없음 → Up 이면 PASS
+    - 기타:     Up 상태면 PASS
+    """
+
+    # 1) Bitwarden만 prefix 매칭 필요
+    if service == "bitwarden":
+        filter_name = "ai4infra-bitwarden-"
+    else:
+        filter_name = f"ai4infra-{service}"
+
+    log_info(f"[check_container] 점검 시작 → {service} ({filter_name}*)")
+
+    # 최대 120초(초기화 대기)
+    for attempt in range(120):
+        ps = subprocess.run(
+            f"sudo docker ps --filter name={filter_name} --format '{{{{.Status}}}}'",
+            shell=True, text=True, capture_output=True
+        )
+        statuses = ps.stdout.strip().splitlines()
+
+        # 1) 컨테이너 없음
+        if not statuses:
+            log_warn(f"[check_container] 컨테이너 없음 → 재시도 ({attempt+1}/120)")
+            time.sleep(1)
+            continue
+
+        # ------------------------------------------------------------------
+        # Bitwarden: 여러 컨테이너의 health를 종합적으로 판단
+        # ------------------------------------------------------------------
+        if service == "bitwarden":
+            low = ps.stdout.lower()
+
+            if "unhealthy" in low:
+                log_error("[check_container] Bitwarden unhealthy 감지 → 실패")
+                return False
+            if "starting" in low:
+                log_info(f"[check_container] Bitwarden 초기화 중 → 재시도 ({attempt+1}/120)")
+                time.sleep(1)
+                continue
+
+            # starting 없음 + unhealthy 없음 = 정상
+            log_info("[check_container] Bitwarden health 정상")
+            break
+
+        # ------------------------------------------------------------------
+        # Vault: 단순히 Up 상태면 PASS
+        # ------------------------------------------------------------------
+        elif service == "vault":
+            if any("up" in s.lower() for s in statuses):
+                break
+            log_info(f"[check_container] Vault 대기중 → 재시도 ({attempt+1}/120)")
+            time.sleep(1)
+            continue
+
+        # ------------------------------------------------------------------
+        # 기타 서비스: 단일 컨테이너 Up 확인
+        # ------------------------------------------------------------------
+        else:
+            if any("up" in s.lower() for s in statuses):
+                break
+            log_info(f"[check_container] {service} 준비중 → 재시도 ({attempt+1}/120)")
+            time.sleep(1)
+            continue
+
+    else:
+        log_error(f"[check_container] {service}: 상태 정상화 실패")
+        return False
+
+    # ----------------------------------------------------------------------
+    # 로그 검사 (간결)
+    # ----------------------------------------------------------------------
+    logs = subprocess.run(
+        f"sudo docker logs {filter_name}",
+        shell=True, text=True, capture_output=True
+    )
+    lowlog = logs.stdout.lower()
+
+    if "error" in lowlog or "failed" in lowlog:
+        log_warn("[check_container] 로그에서 error/failed 감지됨")
+    else:
+        log_info("[check_container] 로그 정상(Log clean)")
+
+    # custom_check (Vault/Postgres 등)
+    if custom_check:
+        return custom_check(service)
+
+    log_info(f"[check_container] 기본 점검 완료(PASS) → {service}")
+    return True
+
+
+
+
+# Vault HTTP status code → 의미 매핑 (공식 문서 기반)
+VAULT_HEALTH_MAP = {
+    200: "OK (initialized, unsealed, active)",
+    429: "Standby (initialized, unsealed, standby)",
+    472: "DR Secondary",
+    473: "Performance Standby",
+    474: "Standby but active node unreachable",
+    501: "Not initialized",
+    503: "Sealed (unsealed required)",
+    530: "Node removed from cluster",
+}
+
+
+def check_vault(service: str) -> bool:
+    container = f"ai4infra-{service}"
+    url = "https://localhost:8200/v1/sys/health"
+
+    success_attempt = None
+    status_code = None
+    response_body = None
+
+    # --------------------------------------------
+    # Retry loop (HTTP Status + JSON)
+    # --------------------------------------------
+    for attempt in range(20):
+        result = subprocess.run(
+            f"curl -sk -o /tmp/vault_health.json -w '%{{http_code}}' {url}",
+            shell=True, text=True, capture_output=True
+        )
+
+        status_str = result.stdout.strip()
+
+        # status_code만 먼저 파싱
+        if status_str.isdigit():
+            status_code = int(status_str)
+
+        # JSON 본문 로드
+        try:
+            with open("/tmp/vault_health.json", "r") as f:
+                response_body = f.read().strip()
+        except:
+            response_body = ""
+
+        if status_code and response_body:
+            success_attempt = attempt
+            break
+
+        log_warn(f"[check_vault] API healthcheck 실패 → 재시도 ({attempt+1}/20)")
+        time.sleep(1)
+
+    if success_attempt is None:
+        log_error("[check_vault] 20회 실패 → Vault API 응답 없음")
+        return False
+
+    # --------------------------------------------
+    # 성공 attempt 출력
+    # --------------------------------------------
+    log_info(f"[check_vault] API healthcheck 성공 → {success_attempt+1}번째 시도")
+
+    # --------------------------------------------
+    # Debug 모드일 때: HTTP Code 의미를 상세 표시
+    # --------------------------------------------
+    meaning = VAULT_HEALTH_MAP.get(status_code, "Unknown status")
+
+    log_debug(f"[check_vault] HTTP Code: {status_code} → {meaning}")
+
+    # --------------------------------------------
+    # Info 모드용 간결한 status 출력
+    # --------------------------------------------
+    try:
+        data = json.loads(response_body)
+    except Exception as e:
+        log_error(f"[check_vault] API JSON 파싱 실패: {e}")
+        return False
+
+    log_info(f" initialized: {data.get('initialized')}")
+    log_info(f" sealed     : {data.get('sealed')}")
+    log_info(f" standby    : {data.get('standby')}")
+    log_info(f" version    : {data.get('version')}")
+
+    return True
+
+
+
+# -------------------------------------------------------
+# PostgreSQL 점검 함수
+# -------------------------------------------------------
+
+def check_postgres(service: str) -> bool:
+    container = f"ai4infra-{service}"
+
+    # SELECT 1 테스트
+    result = subprocess.run(
+        f"sudo docker exec {container} psql -U postgres -c 'SELECT 1;'",
+        shell=True, text=True, capture_output=True
+    )
+
+    if "1 row" in result.stdout:
+        log_info("[check_postgres] SELECT 1 성공")
+        return True
+
+    log_error("[check_postgres] SELECT 1 실패")
+    return False            
 

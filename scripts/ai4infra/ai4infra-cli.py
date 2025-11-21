@@ -35,12 +35,14 @@ from utils.container_manager import (
     backup_data,
     setup_usb_secrets,
     apply_override,
+    check_container,
+    check_vault,
+    check_postgres,
 )
 from utils.certs_manager import (
     generate_root_ca_if_needed,
-    get_service_cert_paths,
     create_service_certificate,
-    fix_bitwarden_cert_permissions,
+    install_root_ca_windows,
 )
 
 load_dotenv()
@@ -144,6 +146,18 @@ def install(
 
         log_info(f"[install] {svc} 설치 완료")
 
+        # -----------------------------
+        # 설치 후 자동 점검 단계 추가
+        # -----------------------------
+        if svc == "vault":
+            check_container("vault", check_vault)
+        elif svc == "postgres":
+            check_container("postgres", check_postgres)
+        else:
+            check_container(svc)  # 기본 점검
+
+        log_info(f"[install] {svc} 설치 및 점검 완료")
+
 
   
 @app.command()
@@ -235,6 +249,18 @@ def restore(
     # 6) 컨테이너 재시작
     start_container(service)
     log_info(f"[restore] {service} 복원 완료")
+
+    # -----------------------------
+    # 설치 후 자동 점검 단계 추가
+    # -----------------------------
+    if service == "vault":
+        check_container("vault", check_vault)
+    elif service == "postgres":
+        check_container("postgres", check_postgres)
+    else:
+        check_container(service)  # 기본 점검
+
+    log_info(f"[install] {service} 설치 및 점검 완료")
 
 
 @app.command()
@@ -388,7 +414,13 @@ def unseal_vault():
     log_info("[unseal_vault] 사용자에게 Vault 언실 명령 실행 안내 완료")
 
 
-
+@app.command()
+def install_rootca_windows():
+    """
+    Windows에 Root CA 자동 설치 (WSL2 환경 전용)
+    """
+    
+    install_root_ca_windows()
 
 
 if __name__ == "__main__":

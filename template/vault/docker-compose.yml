@@ -13,8 +13,8 @@ services:
       - VAULT_ADDR=https://localhost:8200
     command: >
       sh -c "
-        cp /vault/certs/vault.crt /etc/ssl/certs/vault.crt 2>/dev/null || true;
-        cat /vault/certs/vault.crt >> /etc/ssl/certs/ca-certificates.crt 2>/dev/null || true;
+        cp /vault/certs/certificate.crt /etc/ssl/certs/certificate.crt 2>/dev/null || true;
+        cat /vault/certs/certificate.crt >> /etc/ssl/certs/ca-certificates.crt 2>/dev/null || true;
         vault server -config=/vault/config/vault.hcl
       "
     volumes:
@@ -23,12 +23,6 @@ services:
       - ${VAULT_CONFIG_DIR:-/opt/ai4infra/vault/config}:/vault/config
     networks:
       - ai4infra
-    healthcheck:
-      test: ["CMD", "sh", "-c", "curl -sk https://localhost:8200/v1/sys/health | jq -e '.sealed == false'"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
 
 networks:
   ai4infra:

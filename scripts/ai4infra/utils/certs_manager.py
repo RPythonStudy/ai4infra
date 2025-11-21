@@ -28,6 +28,7 @@ AI4INFRA 인증서 관리 모듈 (리팩터링 버전)
                 Root CA 전역 보존(rootCA.pem) + 서비스별 복사로 정리
 """
 
+
 import os
 import subprocess
 from pathlib import Path
@@ -535,3 +536,56 @@ def create_service_certificate(
     except Exception as e:
         log_error(f"[create_service_certificate] 예외 발생: {e}")
         return False
+    
+def install_root_ca_windows():
+    from pathlib import Path
+    import subprocess
+
+    root_ca_path = Path("/opt/ai4infra/certs/ca/rootCA.pem")
+    if not root_ca_path.exists():
+        print("[ERROR] Root CA 파일이 존재하지 않습니다:", root_ca_path)
+        return False
+
+    # Windows %USERPROFILE% 가져오기 (CMD 출력 = cp949)
+    try:
+        win_home_raw = subprocess.check_output(
+            ["cmd.exe", "/c", "echo %USERPROFILE%"],
+            stderr=subprocess.DEVNULL   # UNC 경고 숨김
+        )
+        win_home = win_home_raw.decode("cp949").strip()
+        win_home = win_home.replace("\\", "/")
+    except Exception as e:
+        print(f"[ERROR] USERPROFILE 경로를 가져오지 못했습니다: {e}")
+        return False
+
+    target = f"{win_home}/Downloads/ai4infra-rootCA.cer"
+
+    # Root CA를 Windows로 복사
+    subprocess.run(["cp", str(root_ca_path), f"/mnt/c{target[2:]}"], check=True)
+    print(f"[INFO] Root CA 복사 완료 → {target}")
+
+    # certutil 실행 (결과는 cp949 인코딩)
+    cmd = [
+        "powershell.exe",
+        "-NoProfile",
+        "-Command",
+        f'certutil -addstore -user "Root" "{target}"'
+    ]
+
+    result = subprocess.run(cmd, capture_output=True)
+
+    stdout = result.stdout.decode("cp949", errors="ignore")
+    stderr = result.stderr.decode("cp949", errors="ignore")
+
+    print("[INFO] certutil stdout:")
+    print(stdout)
+    print("[INFO] certutil stderr:")
+    print(stderr)
+
+    if result.returncode == 0:
+        print("[SUCCESS] Windows Trusted Root Store에 Root CA 설치 완료")
+        return True
+    else:
+        print("[ERROR] Root CA 설치 실패")
+        return False
+
