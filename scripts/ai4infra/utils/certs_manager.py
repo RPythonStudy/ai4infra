@@ -602,6 +602,7 @@ def apply_service_permissions(service: str) -> bool:
                 ["sudo", "chown", "-R", f"{uid}:{gid}", str(service_dir)],
                 check=False,
             )
+            log_info(f"[apply_service_permissions] 서비스 디렉터리 소유권 변경 → {service_dir} ({uid}:{gid})")
 
         # 2) 데이터 디렉터리 권한
         if data_dir.exists():
@@ -609,10 +610,12 @@ def apply_service_permissions(service: str) -> bool:
                 ["sudo", "chmod", "-R", data_mode, str(data_dir)],
                 check=False,
             )
+            log_info(f"[apply_service_permissions] 데이터 디렉터리 권한 변경 → {data_dir} ({data_mode})")
 
         # 3) 인증서 디렉터리 권한
         if cert_dir.exists():
             key_paths: set[Path] = set()
+            key_count = 0
 
             # private key 후보들
             for pattern in ("*.key", "*key.pem", "*_key.pem"):
@@ -622,20 +625,30 @@ def apply_service_permissions(service: str) -> bool:
                         ["sudo", "chmod", key_mode, str(path)],
                         check=False,
                     )
+                    key_count += 1
+            
+            if key_count > 0:
+                log_info(f"[apply_service_permissions] Private key 권한 변경 → {key_count}개 파일 ({key_mode})")
 
             # 나머지 crt/pem 은 cert_mode
+            cert_count = 0
             for path in cert_dir.glob("*.crt"):
                 if path not in key_paths:
                     subprocess.run(
                         ["sudo", "chmod", cert_mode, str(path)],
                         check=False,
                     )
+                    cert_count += 1
             for path in cert_dir.glob("*.pem"):
                 if path not in key_paths:
                     subprocess.run(
                         ["sudo", "chmod", cert_mode, str(path)],
                         check=False,
                     )
+                    cert_count += 1
+            
+            if cert_count > 0:
+                log_info(f"[apply_service_permissions] Certificate 권한 변경 → {cert_count}개 파일 ({cert_mode})")
 
         # Bitwarden 특수 구조 추가 보정 (파일명 기준)
         if service == "bitwarden":

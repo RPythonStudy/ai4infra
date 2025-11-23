@@ -344,72 +344,6 @@ def copy_template(service: str) -> bool:
         log_error(f"[copy_template] 실패: {e.stderr}")
         return False
 
-def fix_postgres_permissions() -> bool:
-    """
-    PostgreSQL 데이터 디렉터리 및 TLS 인증서 권한을 uid:gid = 70:70 으로 정렬.
-    - data 디렉터리: 700 / 70:70
-    - server.key:    600 / 70:70   (TLS 필수 조건)
-    - server.crt:    644 / 70:70 또는 root (문제 없음)
-    - rootCA.crt:    644 / 70:70 또는 root (문제 없음)
-    """
-    data_dir = f"{BASE_DIR}/postgres/data"
-    certs_dir = f"{BASE_DIR}/postgres/certs"
-
-    server_key = f"{certs_dir}/private.key"
-    server_crt = f"{certs_dir}/certificate.crt"
-    root_ca    = f"{certs_dir}/rootCA.crt"
-
-    try:
-        # --------------------------------------------------------
-        # 1) PostgreSQL data 디렉터리 권한 보정
-        # --------------------------------------------------------
-        subprocess.run(["sudo", "mkdir", "-p", data_dir], check=True)
-        subprocess.run(["sudo", "chown", "-R", "70:70", data_dir], check=True)
-        subprocess.run(["sudo", "chmod", "-R", "700", data_dir], check=True)
-        log_info(f"[fix_postgres_permissions] data 디렉터리 설정 완료 → {data_dir} (70:70, 700)")
-
-        # --------------------------------------------------------
-        # 2) TLS 인증서 디렉터리 생성
-        # --------------------------------------------------------
-        subprocess.run(["sudo", "mkdir", "-p", certs_dir], check=True)
-
-        # --------------------------------------------------------
-        # 3) server.key  (PostgreSQL TLS의 가장 중요한 파일)
-        # --------------------------------------------------------
-        if os.path.exists(server_key):
-            subprocess.run(["sudo", "chown", "70:70", server_key], check=True)
-            subprocess.run(["sudo", "chmod", "600", server_key], check=True)
-            log_info(f"[fix_postgres_permissions] private.key 권한 설정 완료 (600, 70:70)")
-        else:
-            log_warn(f"[fix_postgres_permissions] private.key 없음 → {server_key}")
-
-        # --------------------------------------------------------
-        # 4) server.crt
-        # --------------------------------------------------------
-        if os.path.exists(server_crt):
-            subprocess.run(["sudo", "chmod", "644", server_crt], check=True)
-            # 소유자는 postgres여도 되고 root여도 됨 → 변경하지 않음
-            log_info(f"[fix_postgres_permissions] certificate.crt 설정 완료 (644)")
-        else:
-            log_warn(f"[fix_postgres_permissions] certificate.crt 없음 → {server_crt}")
-
-        # --------------------------------------------------------
-        # 5) rootCA.crt
-        # --------------------------------------------------------
-        if os.path.exists(root_ca):
-            subprocess.run(["sudo", "chmod", "644", root_ca], check=True)
-            # 마찬가지로 소유자는 root 또는 postgres 모두 허용됨
-            log_info(f"[fix_postgres_permissions] rootCA.crt 설정 완료 (644)")
-        else:
-            log_warn(f"[fix_postgres_permissions] rootCA.crt 없음 → {root_ca}")
-
-        return True
-
-    except subprocess.CalledProcessError as e:
-        log_error(f"[fix_postgres_permissions] 실패: {e}")
-        return False
-
-
 def extract_env_vars(env_path: str, section: str) -> dict:
     """지정된 섹션(# SECTION) 아래 key=value 쌍을 추출"""
     section_header = f"# {section.upper()}"
@@ -994,12 +928,6 @@ def check_postgres(service: str) -> bool:
     # TLS가 실제 "on"이면 기본 인증 파일 경로와 존재 여부는 별도 점검
     return check_postgres_tls_diagnostics(container, tls_must_be_on=True)
 
-
-
-# =====================================================================
-# TLS 자동 진단 로직
-# =====================================================================
-
 def check_postgres_tls_diagnostics(container: str, tls_must_be_on: bool=False) -> bool:
     """
     PostgreSQL TLS 비활성(ssl=off) 또는 TLS 오류 원인 자동 분석
@@ -1097,11 +1025,6 @@ def check_postgres_tls_diagnostics(container: str, tls_must_be_on: bool=False) -
     log_info("[TLS-DIAG] TLS 설정 및 파일 검증 완료 (모두 OK)")
     return True
 
-
-# =====================================================================
-# 헬퍼 함수
-# =====================================================================
-
 def run_psql_show(container: str, name: str) -> str:
     cmd = f"sudo docker exec {container} psql -U postgres -t -c \"SHOW {name};\""
     res = subprocess.run(cmd, shell=True, text=True, capture_output=True)
@@ -1120,5 +1043,3 @@ def run_owner(container: str, path: str) -> str:
     cmd = f"sudo docker exec {container} stat -c '%U:%G' '{path}'"
     res = subprocess.run(cmd, shell=True, text=True, capture_output=True)
     return res.stdout.strip()
-
-          

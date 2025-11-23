@@ -30,7 +30,6 @@ from utils.container_manager import (
     add_docker_group,
     stop_container,
     copy_template,
-    fix_postgres_permissions,
     generate_env,
     install_bitwarden,
     start_container,
@@ -45,6 +44,7 @@ from utils.container_manager import (
 from utils.certs_manager import (
     generate_root_ca_if_needed,
     create_service_certificate,
+    apply_service_permissions,
     install_root_ca_windows,
 )
 
@@ -141,11 +141,9 @@ def install(
         )
 
         # ---------------------------------------------------------
-        # 6) 서비스별 권한 설정
+        # 6) 서비스별 권한 설정 (데이터/인증서 디렉터리)
         # ---------------------------------------------------------
-        # Bitwarden cert 권한은 certs_manager 내부에서 자동 처리
-        if svc == "postgres":
-            fix_postgres_permissions()
+        apply_service_permissions(svc)
 
         # ---------------------------------------------------------
         # 7) --backup 모드: 데이터 복원
@@ -200,6 +198,9 @@ def install(
             else:
                 log_error("[install] TLS override 템플릿이 없습니다")
                 continue
+
+            # 2-1) TLS 인증서 권한 재설정
+            apply_service_permissions("postgres")
 
             # 3) TLS 모드 재기동
             start_container("postgres")
