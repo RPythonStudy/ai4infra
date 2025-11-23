@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
 파일명: scripts/ai4infra/ai4infra-cli.py
-인자: 
+주요구현: 
   - install: `서비스명` 또는 `all`를 인자로 하며 아래의 옵션이 있음
     - default: 컨테이너중단/데이터백업 후 멱등성 설치 
     -   reset: 컨테이너중단/데이터삭제 후 설치 (개발용)
 변경이력:
+  - 2025-11-22: backup 및 멱등성 설치 추가 (BenKorea)
   - 2025-11-16: 최초 구현 (BenKorea)
 """
 
@@ -29,10 +30,12 @@ from utils.container_manager import (
     add_docker_group,
     stop_container,
     copy_template,
+    fix_postgres_permissions,
     generate_env,
     install_bitwarden,
     start_container,
     backup_data,
+    restore_data,
     setup_usb_secrets,
     apply_override,
     check_container,
@@ -49,70 +52,78 @@ load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
 app = typer.Typer(help="AI4INFRA 서비스 관리")
-SERVICES = ('postgres', 'vault', 'elk', 'ldap', 'bitwarden') # 튜플로 선언하어 변경 방지
-
+SERVICES = ('vault', 'bitwarden', 'postgres', 'elk', 'ldap') # 튜플로 선언하어 변경 방지
 
 @app.command()
 def install(
     service: str = typer.Argument("all", help="설치할 서비스 이름"),
-    reset: bool = typer.Option(False, "--reset", help="기존 데이터/컨테이너 삭제 후 완전 재설치 (개발용)")
+    reset: bool = typer.Option(False, "--reset", help="기존 데이터/컨테이너 삭제 후 완전 재설치 (개발용)"),
+    backup: bool = typer.Option(False, "--backup", help="데이터 백업 → 서비스 폴더 삭제 → 설치 → 데이터 복원")
 ):
     """
-    AI4INFRA 서비스 설치 절차 (리팩토링 버전)
+    AI4INFRA 서비스 설치
+
+    모드:
+      - 기본 (옵션 없음): 멱등성 설치 (컨테이너 중지 → 템플릿 덮어쓰기 → 재시작)
+      - --reset: 완전 재설치 (데이터 포함 전체 삭제 후 설치)
+      - --backup: 데이터 보존 재설치 (데이터 백업 → 전체 삭제 → 설치 → 데이터 복원)
 
     단계:
       1) 컨테이너 중지
-      2) reset 시 기존 데이터 삭제 / reset=False 시 백업
+      2) 데이터 처리 (reset/backup/멱등성)
       3) 템플릿 복사
       4) 서비스별 사전 준비 (bitwarden 설치 등)
-      5) Root CA 생성
-      6) 서비스별 인증서 생성 (create_service_certificate)
-      7) 환경파일(.env) 생성
-      8) 컨테이너 시작
+      5) 서비스별 인증서 생성
+      6) 환경파일(.env) 생성
+      7) 컨테이너 시작
     """
+
+    generate_root_ca_if_needed()
 
     services = list(SERVICES) if service == "all" else [service]
 
-    # ---------------------------------------------------------
-    # Bitwarden 계정 생성 필요 시
-    # ---------------------------------------------------------
     if "bitwarden" in services:
         create_user("bitwarden")
         add_docker_group("bitwarden")
 
-    # ---------------------------------------------------------
-    # Vault 관련 USB secrets 사전 준비
-    # ---------------------------------------------------------
-    if "vault" in services:
-        setup_usb_secrets()
-
-    # ---------------------------------------------------------
-    # Root CA 생성 (최초 1회)
-    # ---------------------------------------------------------
-    generate_root_ca_if_needed()
-
-    # ---------------------------------------------------------
-    # 각 서비스 설치 처리
-    # ---------------------------------------------------------
     for svc in services:
         print("####################################################################################")
         service_dir = f"{BASE_DIR}/{svc}"
+        backup_path = None
 
         # 1) 컨테이너 중지
         stop_container(f"ai4infra-{svc}")
 
-        # 2) reset 처리
+        # 2) 데이터 처리 (3가지 모드)
         if reset:
-            log_info(f"[install] --reset 옵션: {svc} 기존 데이터 삭제 진행")
+            # 모드 1: 완전 재설치 (데이터 포함 전체 삭제)
+            log_info(f"[install] --reset 모드: {svc} 전체 삭제 (데이터 포함)")
             subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
             log_info(f"[install] 삭제 완료: {service_dir}")
+
+        elif backup:
+            # 모드 2: 데이터 보존 재설치 (백업 → 삭제 → 복원)
+            log_info(f"[install] --backup 모드: {svc} 데이터 백업 시작")
+            backup_path = backup_data(svc)
+            if not backup_path:
+                log_error(f"[install] {svc} 백업 실패 → 설치 중단")
+                continue
+            
+            log_info(f"[install] 백업 완료 → {backup_path}")
+            log_info(f"[install] {svc} 서비스 폴더 삭제")
+            subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
+            log_info(f"[install] 삭제 완료: {service_dir}")
+
         else:
-            backup_data(svc)
+            # 모드 3: 멱등성 설치 (기존 파일 유지, 템플릿만 덮어쓰기)
+            log_info(f"[install] 멱등성 모드: {svc} 기존 데이터 설정 유지")
 
         # 3) 템플릿 복사
         copy_template(svc)
 
-        # 4) Bitwarden 설치 단계
+        # ---------------------------------------------------------
+        # 4) Bitwarden 설치 단계 (파일 구조 준비)
+        # ---------------------------------------------------------
         if svc == "bitwarden":
             ok = install_bitwarden()
             if not ok:
@@ -121,7 +132,7 @@ def install(
             apply_override("bitwarden")
 
         # ---------------------------------------------------------
-        # 5) 서비스별 인증서 생성 (리팩터링된 certs_manager API)
+        # 5) 서비스별 인증서 생성 (Bitwarden 설치 완료 후)
         # ---------------------------------------------------------
         create_service_certificate(
             service=svc,
@@ -129,18 +140,30 @@ def install(
             san=None  # 기본 SAN 자동 생성
         )
 
-        # (중요) Bitwarden cert 권한은 certs_manager 내부에서 자동 처리되므로
-        # 별도의 fix_bitwarden_cert_permissions() 호출 불필요
+        # ---------------------------------------------------------
+        # 6) 서비스별 권한 설정
+        # ---------------------------------------------------------
+        # Bitwarden cert 권한은 certs_manager 내부에서 자동 처리
+        if svc == "postgres":
+            fix_postgres_permissions()
 
         # ---------------------------------------------------------
-        # 6) 환경파일 생성 (.env)
+        # 7) --backup 모드: 데이터 복원
+        # ---------------------------------------------------------
+        if backup and backup_path:
+            if not restore_data(svc, backup_path):
+                log_error(f"[install] {svc} 데이터 복원 실패")
+                continue
+
+        # ---------------------------------------------------------
+        # 7) 환경파일 생성 (.env)
         # ---------------------------------------------------------
         env_path = generate_env(svc)
         if not env_path:
             log_info(f"[install] {svc}: .env 생성 생략")
 
         # ---------------------------------------------------------
-        # 7) 컨테이너 시작
+        # 8) 컨테이너 시작
         # ---------------------------------------------------------
         start_container(svc)
 
@@ -155,6 +178,37 @@ def install(
             check_container("postgres", check_postgres)
         else:
             check_container(svc)  # 기본 점검
+
+            # ai4infra-cli.py 내부 install() 루프 중
+        if svc == "postgres":
+            log_info("[install] PostgreSQL 1단계 설치 및 점검 완료")
+
+            # 1) 컨테이너 중지
+            stop_container("ai4infra-postgres")
+            log_info("[install] PostgreSQL 컨테이너 중지 완료 (TLS 적용 준비)")
+
+            # 2) override 파일 복사
+            override_src = f"{PROJECT_ROOT}/template/postgres/docker-compose.override.yml"
+            override_dst = f"{BASE_DIR}/postgres/docker-compose.override.yml"
+
+            if Path(override_src).exists():
+                subprocess.run(
+                    ["sudo", "cp", "-a", override_src, override_dst],
+                    check=True
+                )
+                log_info(f"[install] TLS override 적용 완료 → {override_dst}")
+            else:
+                log_error("[install] TLS override 템플릿이 없습니다")
+                continue
+
+            # 3) TLS 모드 재기동
+            start_container("postgres")
+            log_info("[install] PostgreSQL TLS 모드 재가동 완료")
+
+            # 4) TLS 기반 PostgreSQL 점검
+            check_container("postgres", check_postgres)
+            log_info("[install] PostgreSQL 2단계(TLS) 검증 완료")
+        
 
         log_info(f"[install] {svc} 설치 및 점검 완료")
 
@@ -263,26 +317,6 @@ def restore(
     log_info(f"[install] {service} 설치 및 점검 완료")
 
 
-@app.command()
-def cert(
-    services: List[str] = typer.Argument(help="인증서를 생성할 서비스 목록"),
-    days: int = typer.Option(730, "--days", "-d", help="인증서 유효기간 (일)"),
-    overwrite: bool = typer.Option(False, "--overwrite", "-f", 
-                                 help="기존 인증서 덮어쓰기")
-):
-    """SSL 인증서 생성 - Vault 프로덕션 모드용"""
-    log_info(f"[cert] {services} 인증서 생성 시작")
-    
-    # all이면 모든 서비스
-    if services == ["all"]:
-        services = SERVICES
-    
-    success = generate_certificates(services, days, overwrite)
-    
-    if success:
-        log_info(f"[cert] {len(services)}개 서비스 인증서 생성 완료")
-    else:
-        log_error("[cert] 일부 인증서 생성 실패")
 
 @app.command()
 def init_vault():

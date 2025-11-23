@@ -3,17 +3,34 @@ services:
     image: postgres:16.3-alpine
     container_name: ai4infra-postgres
     restart: unless-stopped
+
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ai4infra123!}
       - POSTGRES_DB=${POSTGRES_DB:-ai4infra}
+
+    # PostgreSQL은 $PGDATA 안에서 SSL 인증서를 찾기 때문에
+    # data 디렉토리(왼쪽) 내부에 certs를 함께 마운트해야 함
     volumes:
+      # 데이터 파일
       - ${PG_DATA_DIR:-/opt/ai4infra/postgres/data}:/var/lib/postgresql/data
+
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
     ports:
       - "${PG_PORT:-5432}:5432"
+
     networks:
       - ai4infra
+
 networks:
   ai4infra:
     external: true
     name: ai4infra
+
+

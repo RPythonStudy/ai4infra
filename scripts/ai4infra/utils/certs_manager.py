@@ -28,12 +28,15 @@ AI4INFRA 인증서 관리 모듈 (리팩터링 버전)
                 Root CA 전역 보존(rootCA.pem) + 서비스별 복사로 정리
 """
 
-
+# Standard library imports
 import os
 import subprocess
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from functools import wraps
+import yaml
 
+# Third-party imports
 from dotenv import load_dotenv
 from common.logger import log_info, log_warn, log_error
 
@@ -107,22 +110,21 @@ def create_root_ca(overwrite: bool = False) -> bool:
                 "-sha256",
                 "-days",
                 "3650",
+                "-subj",
+                "/C=KR/ST=Seoul/O=AI4INFRA/CN=AI4INFRA-Root-CA",
                 "-out",
                 str(CA_CERT),
-                "-subj",
-                "/CN=AI4INFRA-Root-CA",
             ],
             check=True,
         )
 
-        subprocess.run(["sudo", "chmod", "600", str(CA_KEY)], check=True)
-        subprocess.run(["sudo", "chmod", "644", str(CA_CERT)], check=True)
-
         log_info(f"[create_root_ca] Root CA 생성 완료 → {CA_CERT}")
         return True
-
     except subprocess.CalledProcessError as e:
-        log_error(f"[create_root_ca] 실패: {e}")
+        log_error(f"[create_root_ca] OpenSSL 호출 실패: {e}")
+        return False
+    except Exception as e:
+        log_error(f"[create_root_ca] 예외 발생: {e}")
         return False
 
 
@@ -160,6 +162,48 @@ def verify_root_ca() -> bool:
     except subprocess.CalledProcessError as e:
         log_error(f"[verify_root_ca] OpenSSL 검증 실패: {e.stderr}")
         return False
+    except Exception as e:
+        log_error(f"[verify_root_ca] 예외 발생: {e}")
+        return False
+
+
+# -------------------------------------------------------------------
+# Root CA 없으면 자동 생성
+# -------------------------------------------------------------------
+def generate_root_ca_if_needed() -> bool:
+    """
+    Root CA가 없으면 새로 생성하고, 있으면 그대로 사용
+    """
+    if CA_CERT.exists() and CA_KEY.exists():
+        log_info("[generate_root_ca_if_needed] 기존 Root CA 유지")
+        return True
+
+    log_info("[generate_root_ca_if_needed] Root CA 없음 → 새로 생성합니다.")
+    return create_root_ca(overwrite=False)
+
+
+
+# -------------------------------------------------------------------
+# 서비스별 key/cert 경로 헬퍼
+# -------------------------------------------------------------------
+def get_service_cert_paths(service: str) -> tuple[Path, Path, Path]:
+    """
+    서비스별 key, csr, cert 경로를 반환
+
+    Parameters
+    ----------
+    service : str
+        서비스 이름
+
+    Returns
+    -------
+    (key_path, csr_path, cert_path) : tuple[Path, Path, Path]
+    """
+    base = Path(BASE_DIR) / service / "certs"
+    key_path = base / "private.key"
+    csr_path = base / "request.csr"
+    cert_path = base / "certificate.crt"
+    return key_path, csr_path, cert_path
 
 
 # -------------------------------------------------------------------
@@ -167,70 +211,55 @@ def verify_root_ca() -> bool:
 # -------------------------------------------------------------------
 def build_default_san(service: str) -> str:
     """
-    서비스 이름 기반 SAN(subjectAltName) 자동 생성
-    - 모든 서비스에 대해 localhost / 127.0.0.1 / 서비스명 / ai4infra-서비스명 포함
-    - Bitwarden은 내부 도메인(bitwarden.ai4infra.internal) 및 관련 FQDN 추가
+    서비스 이름을 기반으로 기본 SubjectAltName 문자열을 구성
+
+    예) postgres → DNS:postgres,DNS:ai4infra-postgres,IP:127.0.0.1
     """
-    san_entries: set[str] = set()
+    dns_entries = [
+        service,
+        f"ai4infra-{service}",
+        f"{service}.ai4infra.internal",
+        "localhost",
+    ]
+    ip_entries = [
+        "127.0.0.1",
+    ]
 
-    # 공통 SAN
-    san_entries.update(
-        [
-            "DNS:localhost",
-            "IP:127.0.0.1",
-            f"DNS:{service}",
-            f"DNS:ai4infra-{service}",
-        ]
-    )
-
-    # 호스트명 추가
-    try:
-        hostname = os.uname().nodename
-        if hostname:
-            san_entries.add(f"DNS:{hostname}")
-    except Exception:
-        pass
-
-    # Bitwarden 전용 SAN
-    if service == "bitwarden":
-        san_entries.update(
-            [
-                f"DNS:{BITWARDEN_DOMAIN}",
-                "DNS:bitwarden",
-                "DNS:web.ai4infra.internal",
-                "DNS:api.ai4infra.internal",
-                "DNS:identity.ai4infra.internal",
-                "DNS:nginx",
-            ]
-        )
-
-    # 정렬 후 comma-join
-    return ",".join(sorted(san_entries))
+    san_parts = [f"DNS:{d}" for d in dns_entries] + [f"IP:{ip}" for ip in ip_entries]
+    return ",".join(san_parts)
 
 
 # -------------------------------------------------------------------
-# 서비스 인증서 생성 용 하위 함수들 (각각 단일 책임)
+# 서비스 key 생성
 # -------------------------------------------------------------------
 def create_service_key(service: str, key_path: Path) -> bool:
     """
-    서비스 private key 생성 (RSA 2048)
+    서비스 private key 생성
     """
     try:
+        key_dir = key_path.parent
+        subprocess.run(["sudo", "mkdir", "-p", str(key_dir)], check=True)
+
         subprocess.run(
-            ["sudo", "openssl", "genrsa", "-out", str(key_path), "2048"],
+            ["sudo", "openssl", "genrsa", "-out", str(key_path), "4096"],
             check=True,
         )
-        subprocess.run(["sudo", "chmod", "600", str(key_path)], check=True)
         log_info(f"[create_service_key] {service} key 생성 완료: {key_path}")
         return True
     except subprocess.CalledProcessError as e:
-        log_error(f"[create_service_key] 실패: {e}")
+        log_error(f"[create_service_key] OpenSSL 호출 실패: {e}")
+        return False
+    except Exception as e:
+        log_error(f"[create_service_key] 예외 발생: {e}")
         return False
 
 
+# -------------------------------------------------------------------
+# 서비스 CSR 생성
+# -------------------------------------------------------------------
 def create_service_csr(service: str, key_path: Path, csr_path: Path) -> bool:
     """
-    서비스 CSR 생성 (CN={service})
+    서비스 CSR 생성
     """
     try:
         subprocess.run(
@@ -244,34 +273,53 @@ def create_service_csr(service: str, key_path: Path, csr_path: Path) -> bool:
                 "-out",
                 str(csr_path),
                 "-subj",
-                f"/CN={service}",
+                f"/C=KR/ST=Seoul/O=AI4INFRA/CN={service}.ai4infra.internal",
             ],
             check=True,
         )
         log_info(f"[create_service_csr] {service} CSR 생성: {csr_path}")
         return True
     except subprocess.CalledProcessError as e:
-        log_error(f"[create_service_csr] 실패: {e}")
+        log_error(f"[create_service_csr] OpenSSL 호출 실패: {e}")
+        return False
+    except Exception as e:
+        log_error(f"[create_service_csr] 예외 발생: {e}")
         return False
 
 
+# -------------------------------------------------------------------
+# 서비스 cert CA 서명
+# -------------------------------------------------------------------
 def sign_service_cert_with_ca(
-    service: str, csr_path: Path, cert_path: Path, san: str
+    service: str,
+    csr_path: Path,
+    cert_path: Path,
+    san: str,
 ) -> bool:
     """
-    Root CA로 서비스 CSR을 서명하여 server 인증서 생성
-    - SAN은 subjectAltName= 에 전달
-    """
-    if not CA_CERT.exists() or not CA_KEY.exists():
-        log_error("[sign_service_cert_with_ca] Root CA가 먼저 생성되어야 합니다.")
-        return False
+    CSR을 Root CA로 서명하여 서버 인증서 생성
 
-    tmp_path: str | None = None
+    Parameters
+    ----------
+    san : str
+        SubjectAltName 문자열 (예: "DNS:...,IP:127.0.0.1")
+    """
     try:
-        # SAN 설정용 임시 파일 작성
-        with NamedTemporaryFile("w", delete=False) as tmp:
-            tmp.write(f"subjectAltName={san}")
-            tmp_path = tmp.name
+        cert_dir = cert_path.parent
+        subprocess.run(["sudo", "mkdir", "-p", str(cert_dir)], check=True)
+
+        with NamedTemporaryFile("w", delete=False, suffix=".cnf") as tmp:
+            tmp_path = Path(tmp.name)
+            tmp.write("[ req ]\n")
+            tmp.write("distinguished_name = req_distinguished_name\n")
+            tmp.write("req_extensions = v3_req\n")
+            tmp.write("[ req_distinguished_name ]\n")
+            tmp.write("[ v3_req ]\n")
+            tmp.write(f"subjectAltName = {san}\n")
+
+        log_info(
+            f"[sign_service_cert_with_ca] {service} cert CA 서명 (SAN={san}) → {cert_path}"
+        )
 
         subprocess.run(
             [
@@ -289,39 +337,43 @@ def sign_service_cert_with_ca(
                 "-out",
                 str(cert_path),
                 "-days",
-                "825",
+                "365",
                 "-sha256",
+                "-extensions",
+                "v3_req",
                 "-extfile",
-                tmp_path,
+                str(tmp_path),
             ],
             check=True,
         )
 
-        subprocess.run(["sudo", "chmod", "644", str(cert_path)], check=True)
-        log_info(
-            f"[sign_service_cert_with_ca] {service} cert 생성 완료: {cert_path}"
-        )
+        tmp_path.unlink(missing_ok=True)
         return True
 
     except subprocess.CalledProcessError as e:
-        log_error(f"[sign_service_cert_with_ca] 실패: {e}")
+        log_error(f"[sign_service_cert_with_ca] OpenSSL 호출 실패: {e}")
+        return False
+    except Exception as e:
+        log_error(f"[sign_service_cert_with_ca] 예외 발생: {e}")
         return False
 
-    finally:
-        if tmp_path and Path(tmp_path).exists():
-            try:
-                os.unlink(tmp_path)
-            except Exception:
-                pass
 
-
+# -------------------------------------------------------------------
+# 서비스 인증서 검증
+# -------------------------------------------------------------------
 def verify_service_cert(service: str, cert_path: Path) -> bool:
     """
-    Root CA 기반 서비스 인증서 검증
+    서비스 인증서를 Root CA로 검증
     """
     try:
         result = subprocess.run(
-            ["openssl", "verify", "-CAfile", str(CA_CERT), str(cert_path)],
+            [
+                "openssl",
+                "verify",
+                "-CAfile",
+                str(CA_CERT),
+                str(cert_path),
+            ],
             capture_output=True,
             text=True,
             check=True,
@@ -329,120 +381,85 @@ def verify_service_cert(service: str, cert_path: Path) -> bool:
         log_info(f"[verify_service_cert] OK: {result.stdout.strip()}")
         return True
     except subprocess.CalledProcessError as e:
-        log_error(f"[verify_service_cert] 실패: {e.stderr}")
+        log_error(f"[verify_service_cert] 검증 실패: {e.stderr.strip()}")
+        return False
+    except Exception as e:
+        log_error(f"[verify_service_cert] 예외 발생: {e}")
         return False
 
 
 # -------------------------------------------------------------------
-# 서비스별 인증서 경로 계산
+# 서비스 디렉터리에 Root CA 복사
 # -------------------------------------------------------------------
-def get_service_cert_paths(service: str) -> dict:
+def deploy_root_ca_to_service(service: str, ca_src: Path) -> bool:
     """
-    서비스별 인증서/키/CA 파일 경로를 반환한다.
+    서비스 디렉터리 내부 certs/에 Root CA 복사
 
-    Bitwarden:
-      - 호스트: {BASE_DIR}/bitwarden/bwdata/ssl/bitwarden.ai4infra.internal/
-      - 컨테이너: /etc/ssl/bitwarden.ai4infra.internal/...
-
-    기타 서비스:
-      - {BASE_DIR}/{service}/certs/ 이하
+    - 기본 파일명: rootCA.crt
+    - Bitwarden 의 경우: bwdata/ssl/<domain>/ca.crt
     """
-    base = BASE_DIR
-
-    if service == "bitwarden":
-        certs_dir = Path(f"{base}/bitwarden/bwdata/ssl/{BITWARDEN_DOMAIN}")
-        return {
-            "certs_dir": certs_dir,
-            "key": certs_dir / "private.key",
-            "csr": certs_dir / "certificate.csr",
-            "cert": certs_dir / "certificate.crt",
-            "ca": certs_dir / "ca.crt",
-        }
-
-    # 그 외 서비스 (vault, postgres, ldap, elk 등)
-    certs_dir = Path(f"{base}/{service}/certs")
-    return {
-        "certs_dir": certs_dir,
-        "key": certs_dir / "private.key",
-        "csr": certs_dir / "certificate.csr",
-        "cert": certs_dir / "certificate.crt",
-        "ca": certs_dir / "rootCA.crt",
-    }
-
-
-# -------------------------------------------------------------------
-# Root CA 없으면 자동 생성
-# -------------------------------------------------------------------
-def generate_root_ca_if_needed(overwrite: bool = False) -> bool:
-    """
-    Root CA가 없으면 자동 생성.
-    """
-    if CA_KEY.exists() and CA_CERT.exists() and not overwrite:
-        log_info("[generate_root_ca_if_needed] 기존 Root CA 유지")
-        return True
-
-    log_info("[generate_root_ca_if_needed] Root CA 없음 → 새로 생성합니다.")
-    return create_root_ca(overwrite=overwrite)
-
-
-# -------------------------------------------------------------------
-# 서비스 디렉터리로 Root CA 복사
-# -------------------------------------------------------------------
-def deploy_root_ca_to_service(service: str, ca_dest: Path) -> bool:
-    """
-    전역 Root CA(CA_CERT)를 서비스 디렉터리로 복사한다.
-    Bitwarden일 경우 ca_dest는 ca.crt,
-    일반 서비스는 rootCA.crt를 사용한다.
-    """
-    if not CA_CERT.exists():
-        log_error("[deploy_root_ca_to_service] Root CA 인증서가 없습니다.")
-        return False
-
     try:
-        ca_dest.parent.mkdir(parents=True, exist_ok=True)
+        if service == "bitwarden":
+            ssl_dir = Path(BASE_DIR) / "bitwarden" / "bwdata" / "ssl" / BITWARDEN_DOMAIN
+            subprocess.run(["sudo", "mkdir", "-p", str(ssl_dir)], check=True)
+            dst = ssl_dir / "ca.crt"
+        else:
+            cert_dir = Path(BASE_DIR) / service / "certs"
+            subprocess.run(["sudo", "mkdir", "-p", str(cert_dir)], check=True)
+            dst = cert_dir / "rootCA.crt"
+
         subprocess.run(
-            ["sudo", "cp", str(CA_CERT), str(ca_dest)],
+            ["sudo", "cp", "-a", str(ca_src), str(dst)],
             check=True,
         )
-        subprocess.run(["sudo", "chmod", "644", str(ca_dest)], check=True)
-        log_info(
-            f"[deploy_root_ca_to_service] Root CA 복사 완료 → {service}: {ca_dest}"
-        )
+        log_info(f"[deploy_root_ca_to_service] Root CA 복사 완료: {dst}")
         return True
     except subprocess.CalledProcessError as e:
-        log_error(f"[deploy_root_ca_to_service] 실패: {e}")
+        log_error(f"[deploy_root_ca_to_service] 복사 실패: {e}")
+        return False
+    except Exception as e:
+        log_error(f"[deploy_root_ca_to_service] 예외 발생: {e}")
         return False
 
 
-# -------------------------------------------------------------------
-# Bitwarden 전용 권한 설정
-# -------------------------------------------------------------------
+# -------------------------------------------------------------
+# Bitwarden 전용 권한 설정 (파일 모드만 조정)
+# -------------------------------------------------------------
 def fix_bitwarden_cert_permissions() -> None:
     """
     Bitwarden SSL 디렉터리 권한 정리
-    - 소유자: bitwarden:bitwarden
+
     - private.key: 600
     - certificate.crt, ca.crt: 644
+
+    소유자/그룹(uid/gid)은 apply_service_permissions()에서
+    config/bitwarden.yml의 permissions 설정을 기준으로 일괄 관리한다.
     """
-    ssl_dir = f"{BASE_DIR}/bitwarden/bwdata/ssl/{BITWARDEN_DOMAIN}"
+    ssl_dir = Path(BASE_DIR) / "bitwarden" / "bwdata" / "ssl" / BITWARDEN_DOMAIN
+
+    if not ssl_dir.exists():
+        log_warn(
+            f"[fix_bitwarden_cert_permissions] Bitwarden ssl 디렉터리가 없습니다: {ssl_dir}"
+        )
+        return
 
     try:
-        subprocess.run(
-            ["sudo", "chown", "-R", "bitwarden:bitwarden", ssl_dir],
-            check=True,
-        )
-        subprocess.run(
-            ["sudo", "chmod", "600", f"{ssl_dir}/private.key"],
-            check=False,
-        )
-        subprocess.run(
-            ["sudo", "chmod", "644", f"{ssl_dir}/certificate.crt"],
-            check=False,
-        )
-        subprocess.run(
-            ["sudo", "chmod", "644", f"{ssl_dir}/ca.crt"],
-            check=False,
-        )
+        # private key
+        key_path = ssl_dir / "private.key"
+        if key_path.exists():
+            subprocess.run(
+                ["sudo", "chmod", "600", str(key_path)],
+                check=False,
+            )
+
+        # server cert / CA cert
+        cert_paths = [ssl_dir / "certificate.crt", ssl_dir / "ca.crt"]
+        for path in cert_paths:
+            if path.exists():
+                subprocess.run(
+                    ["sudo", "chmod", "644", str(path)],
+                    check=False,
+                )
 
         log_info("[fix_bitwarden_cert_permissions] Bitwarden cert 권한 정리 완료")
 
@@ -476,35 +493,26 @@ def create_service_certificate(
     bool
         전체 과정 성공 여부
     """
-    # Root CA 준비
-    if not generate_root_ca_if_needed():
-        return False
-
-    paths = get_service_cert_paths(service)
-    certs_dir: Path = paths["certs_dir"]
-    key_path: Path = paths["key"]
-    csr_path: Path = paths["csr"]
-    cert_path: Path = paths["cert"]
-    ca_path: Path = paths["ca"]
-
-    # 기존 파일이 있고 overwrite=False이면 스킵
-    if (
-        key_path.exists()
-        and cert_path.exists()
-        and ca_path.exists()
-        and not overwrite
-    ):
-        log_info(
-            f"[create_service_certificate] {service} 인증서 이미 존재, "
-            f"overwrite=False → 재생성하지 않음"
-        )
-        return True
-
-    san_value = san or build_default_san(service)
-
     try:
-        # 디렉터리 생성
-        subprocess.run(["sudo", "mkdir", "-p", str(certs_dir)], check=True)
+        # 0) Root CA 준비
+        if not generate_root_ca_if_needed():
+            return False
+
+        ca_path = CA_CERT
+
+        # 1) 경로 구성
+        key_path, csr_path, cert_path = get_service_cert_paths(service)
+
+        if key_path.exists() or cert_path.exists():
+            if not overwrite:
+                log_info(
+                    f"[create_service_certificate] {service} 인증서 이미 존재, overwrite=False → skip"
+                )
+                # Root CA만 서비스 쪽으로 복사 (없을 수도 있으므로)
+                deploy_root_ca_to_service(service, ca_path)
+                return True
+
+        san_value = san or build_default_san(service)
 
         # 1) key 생성
         if not create_service_key(service, key_path):
@@ -526,21 +534,132 @@ def create_service_certificate(
         if not deploy_root_ca_to_service(service, ca_path):
             return False
 
-        # 6) Bitwarden 권한 정리
-        if service == "bitwarden":
-            fix_bitwarden_cert_permissions()
-
         log_info(f"[create_service_certificate] {service} full chain 생성 완료")
         return True
 
     except Exception as e:
         log_error(f"[create_service_certificate] 예외 발생: {e}")
         return False
-    
-def install_root_ca_windows():
-    from pathlib import Path
-    import subprocess
 
+
+# -------------------------------------------------------------------
+# 서비스/마운트 폴더 권한 일괄 설정
+# -------------------------------------------------------------------
+def apply_service_permissions(service: str) -> bool:
+    """
+    config/<service>.yml 의 permissions 섹션을 읽어
+    서비스 디렉터리 및 마운트 폴더(데이터/인증서)의
+    소유자와 권한을 일괄 설정한다.
+
+    permissions 예시:
+
+        permissions:
+          uid: 70
+          gid: 70
+          data_dir_mode: "700"
+          key_mode: "600"
+          cert_mode: "644"
+
+    - uid/gid: 서비스 디렉터리 전체 chown -R
+    - data_dir_mode: 데이터 디렉터리 chmod
+    - key_mode: 인증서 디렉터리 내 private key chmod
+    - cert_mode: 인증서 디렉터리 내 나머지 crt/pem chmod
+    """
+    try:
+        config_dir = Path(PROJECT_ROOT or ".") / "config"
+        cfg_path = config_dir / f"{service}.yml"
+
+        if not cfg_path.exists():
+            log_warn(f"[apply_service_permissions] 설정 파일 없음: {cfg_path}")
+            return False
+
+        with cfg_path.open(encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+
+        perms = cfg.get("permissions") or {}
+        uid = perms.get("uid")
+        gid = perms.get("gid")
+        data_mode = str(perms.get("data_dir_mode", "700"))
+        key_mode = str(perms.get("key_mode", "600"))
+        cert_mode = str(perms.get("cert_mode", "644"))
+
+        service_dir = Path(BASE_DIR) / service
+
+        # 서비스별 데이터/인증서 디렉터리 규칙
+        if service == "vault":
+            data_dir = service_dir / "file"
+            cert_dir = service_dir / "certs"
+        elif service == "bitwarden":
+            data_dir = service_dir / "bwdata"
+            cert_dir = data_dir / "ssl" / BITWARDEN_DOMAIN
+        else:
+            data_dir = service_dir / "data"
+            cert_dir = service_dir / "certs"
+
+        # 1) 서비스 루트 소유권
+        if service_dir.exists() and uid is not None and gid is not None:
+            subprocess.run(
+                ["sudo", "chown", "-R", f"{uid}:{gid}", str(service_dir)],
+                check=False,
+            )
+
+        # 2) 데이터 디렉터리 권한
+        if data_dir.exists():
+            subprocess.run(
+                ["sudo", "chmod", "-R", data_mode, str(data_dir)],
+                check=False,
+            )
+
+        # 3) 인증서 디렉터리 권한
+        if cert_dir.exists():
+            key_paths: set[Path] = set()
+
+            # private key 후보들
+            for pattern in ("*.key", "*key.pem", "*_key.pem"):
+                for path in cert_dir.glob(pattern):
+                    key_paths.add(path)
+                    subprocess.run(
+                        ["sudo", "chmod", key_mode, str(path)],
+                        check=False,
+                    )
+
+            # 나머지 crt/pem 은 cert_mode
+            for path in cert_dir.glob("*.crt"):
+                if path not in key_paths:
+                    subprocess.run(
+                        ["sudo", "chmod", cert_mode, str(path)],
+                        check=False,
+                    )
+            for path in cert_dir.glob("*.pem"):
+                if path not in key_paths:
+                    subprocess.run(
+                        ["sudo", "chmod", cert_mode, str(path)],
+                        check=False,
+                    )
+
+        # Bitwarden 특수 구조 추가 보정 (파일명 기준)
+        if service == "bitwarden":
+            try:
+                fix_bitwarden_cert_permissions()
+            except Exception as e:
+                log_warn(f"[apply_service_permissions] Bitwarden 추가 보정 실패: {e}")
+
+        log_info(f"[apply_service_permissions] {service} 권한 정리 완료")
+        return True
+
+    except Exception as e:
+        log_error(f"[apply_service_permissions] 예외 발생: {e}")
+        return False
+
+
+# -------------------------------------------------------------------
+# Windows Root CA 설치 (WSL2 연동)
+# -------------------------------------------------------------------
+def install_root_ca_windows():
+    """
+    WSL에서 생성한 Root CA를 Windows 신뢰 저장소에 설치
+    - certutil -addstore "Root" rootCA.cer
+    """
     root_ca_path = Path("/opt/ai4infra/certs/ca/rootCA.pem")
     if not root_ca_path.exists():
         print("[ERROR] Root CA 파일이 존재하지 않습니다:", root_ca_path)
@@ -550,7 +669,7 @@ def install_root_ca_windows():
     try:
         win_home_raw = subprocess.check_output(
             ["cmd.exe", "/c", "echo %USERPROFILE%"],
-            stderr=subprocess.DEVNULL   # UNC 경고 숨김
+            stderr=subprocess.DEVNULL,  # UNC 경고 숨김
         )
         win_home = win_home_raw.decode("cp949").strip()
         win_home = win_home.replace("\\", "/")
@@ -564,28 +683,27 @@ def install_root_ca_windows():
     subprocess.run(["cp", str(root_ca_path), f"/mnt/c{target[2:]}"], check=True)
     print(f"[INFO] Root CA 복사 완료 → {target}")
 
-    # certutil 실행 (결과는 cp949 인코딩)
-    cmd = [
-        "powershell.exe",
-        "-NoProfile",
-        "-Command",
-        f'certutil -addstore -user "Root" "{target}"'
-    ]
+    # certutil로 Root CA를 신뢰 저장소에 추가
+    try:
+        result = subprocess.run(
+            ["cmd.exe", "/c", f'certutil -addstore "Root" "{target}"'],
+            capture_output=True,
+        )
+        stdout = result.stdout.decode("cp949", errors="ignore")
+        stderr = result.stderr.decode("cp949", errors="ignore")
 
-    result = subprocess.run(cmd, capture_output=True)
+        print("[INFO] certutil stdout:")
+        print(stdout)
+        print("[INFO] certutil stderr:")
+        print(stderr)
 
-    stdout = result.stdout.decode("cp949", errors="ignore")
-    stderr = result.stderr.decode("cp949", errors="ignore")
+        if result.returncode == 0:
+            print("[SUCCESS] Windows Trusted Root Store에 Root CA 설치 완료")
+            return True
+        else:
+            print("[ERROR] Root CA 설치 실패")
+            return False
 
-    print("[INFO] certutil stdout:")
-    print(stdout)
-    print("[INFO] certutil stderr:")
-    print(stderr)
-
-    if result.returncode == 0:
-        print("[SUCCESS] Windows Trusted Root Store에 Root CA 설치 완료")
-        return True
-    else:
-        print("[ERROR] Root CA 설치 실패")
+    except Exception as e:
+        print(f"[ERROR] certutil 실행 중 예외 발생: {e}")
         return False
-

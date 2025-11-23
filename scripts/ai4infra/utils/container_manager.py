@@ -32,9 +32,9 @@ SERVICES = ['postgres', 'vault', 'elk', 'ldap', 'bitwarden']
 
 def create_user(username: str, password: str = "bit") -> bool:
     """
-    지정된 시스템 사용자를 생성합니다. 이미 존재하는 경우 아무 작업도 수행하지 않습니다.
+    지정된 시스템 사용자 생성
 
-    사용 흐름:
+    주요단계:
     1) `id {username}` 명령으로 사용자 존재 여부를 확인합니다.
     2) 사용자가 존재하지 않으면 `useradd -m -s /bin/bash {username}`으로 생성합니다.
     3) `chpasswd` 명령을 이용해 비밀번호를 설정합니다.
@@ -60,21 +60,20 @@ def create_user(username: str, password: str = "bit") -> bool:
 
     Notes
     -----
-    - 이 함수는 내부 로깅을 수행하며, 반환값을 기반으로 호출자가 
-    다음 단계를 진행할지 결정하는 구조입니다.
+    - 이 함수는 내부 로깅을 수행하며, 반환값을 기반으로 호출자가 다음 단계를 진행할지 결정하는 구조입니다.
     - 사용자 계정은 홈 디렉터리(`/home/{username}`)와 Bash 셸(`/bin/bash`)을 기본 구성으로 생성합니다.
     - 보안 이유로 비밀번호 설정은 로컬 `chpasswd` 명령을 사용합니다.
 
     Future Considerations
     ---------------------
-    - 타 컨테이너 서비스(PostgreSQL, ELK 등)도 독립 계정이 필요한 경우 
-    uid/gid 매핑 전략을 추가 검토할 수 있습니다.
+    - 타 컨테이너 서비스(PostgreSQL, ELK 등)도 독립 계정이 필요한 경우 uid/gid 매핑 전략을 추가 검토할 수 있습니다.
     - 외부에서 비밀번호를 안전하게 주입하기 위한 별도 인터페이스 또는 Vault 연동이 필요할 수 있습니다.
 
     History
     -------
     2025-11-18 : Doc-string 수정 (BenKorea)
     """
+
     try:
         # 1) 사용자 존재 여부 확인
         cmd = ['id', username]
@@ -93,7 +92,6 @@ def create_user(username: str, password: str = "bit") -> bool:
         cmd = ['sudo', 'chpasswd']
         subprocess.run(cmd, input=f"{username}:{password}", text=True, check=True)
         log_info(f"[create_user] 사용자 '{username}' 비밀번호 설정 완료")
-
         return True
 
     except subprocess.CalledProcessError as e:
@@ -106,8 +104,7 @@ def add_docker_group(user: str):
         # 현재 그룹 확인
         cmd = ['groups', user]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        current_groups = result.stdout.strip()
-        
+        current_groups = result.stdout.strip()        
         if 'docker' in current_groups.split():
             log_info(f"[add_docker_group] {user} 사용자가 이미 docker 그룹에 속해 있습니다.")
             return True
@@ -116,12 +113,14 @@ def add_docker_group(user: str):
         subprocess.run(['sudo', 'usermod', '-aG', 'docker', user], check=True)
         log_info(f"[add_docker_group] {user} 사용자를 docker 그룹에 추가했습니다.")
         return True
+    
     except subprocess.CalledProcessError as e:
         log_error(f"[add_docker_group] 실패: {e.stderr if e.stderr else str(e)}")
         return False
 
 def stop_container(search_pattern: str) -> bool:
     """name 필터 패턴으로 일치하는 Docker 컨테이너를 중지"""
+
     cmd = [
         'sudo', 'docker', 'ps',
         '--filter', f'name={search_pattern}',
@@ -146,16 +145,57 @@ def stop_container(search_pattern: str) -> bool:
 
     return True
 
+def get_service_data_dir(service: str) -> str:
+    """
+    config/<service>.yml에서 데이터 디렉터리 경로를 추출합니다.
+    
+    추출 규칙:
+      - postgres: PG_DATA_DIR
+      - vault: VAULT_FILE_DIR
+      - ldap: LDAP_DATA_DIR
+      - bitwarden: {BASE_DIR}/bitwarden/bwdata (설정 파일 없음)
+      - 기타: {BASE_DIR}/{service}/data (기본값)
+    
+    Returns
+    -------
+    str
+        데이터 디렉터리 절대 경로
+    """
+    
+    # Bitwarden은 설정 파일이 없으므로 하드코딩
+    if service == "bitwarden":
+        return f"{BASE_DIR}/{service}/bwdata"
+    
+    # config/<service>.yml에서 추출
+    config_vars = extract_config_vars(service)
+    
+    # 서비스별 데이터 디렉터리 키 매핑
+    data_dir_keys = {
+        'postgres': 'PG_DATA_DIR',
+        'vault': 'VAULT_FILE_DIR',
+        'ldap': 'LDAP_DATA_DIR',
+        'elk': 'ELK_DATA_DIR',
+    }
+    
+    key = data_dir_keys.get(service)
+    if key and key in config_vars:
+        return config_vars[key]
+    
+    # 기본값: {BASE_DIR}/{service}/data
+    log_debug(f"[get_service_data_dir] {service}: 설정 없음, 기본 경로 사용")
+    return f"{BASE_DIR}/{service}/data"
+
 def backup_data(service: str, data_folder: str = None) -> str:
     """
-    서비스 디렉터리를 권한/소유권 그대로 백업합니다.
-
-    제외 항목:
-    - docker-compose.yml
-    - logs/
-    - .env*
-    - *.log
-
+    서비스의 data 디렉터리만 백업합니다.
+    
+    데이터 경로는 config/<service>.yml에서 자동 추출:
+      - postgres: PG_DATA_DIR
+      - vault: VAULT_FILE_DIR
+      - ldap: LDAP_DATA_DIR
+      - bitwarden: {BASE_DIR}/bitwarden/bwdata
+      - 기타: {BASE_DIR}/{service}/data
+    
     백업 결과는 BASE_DIR/backups/{service}/{service}_{timestamp} 에 저장됩니다.
 
     Returns
@@ -163,57 +203,116 @@ def backup_data(service: str, data_folder: str = None) -> str:
     str
         백업이 저장된 디렉터리 경로. 실패 시 빈 문자열.
     """
-    src_dir = f"{BASE_DIR}/{service}"
+    
+    # config/<service>.yml에서 데이터 디렉터리 추출
+    src_dir = get_service_data_dir(service)
+    
     backup_dir = f"{BASE_DIR}/backups/{service}"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     dst_dir = f"{backup_dir}/{service}_{timestamp}"
 
     if not os.path.exists(src_dir):
-        log_info(f"[backup_data] {service}: 백업할 디렉터리 없음 ({src_dir})")
+        log_info(f"[backup_data] {service}: 백업할 data 디렉터리 없음 ({src_dir})")
         return ""
 
     try:
         # 백업 디렉터리 생성
         subprocess.run(['sudo', 'mkdir', '-p', backup_dir], check=True)
 
-        # 권한/소유권을 그대로 보존한 채 백업
+        # 권한/소유권을 그대로 보존하여 data 디렉터리만 백업
         cmd = [
             'sudo', 'rsync', '-a', '--numeric-ids',
-            '--exclude', 'docker-compose.yml',
-            '--exclude', 'logs/',
-            '--exclude', '.env',
-            '--exclude', '*.log',
             f"{src_dir}/", f"{dst_dir}/"
         ]
         subprocess.run(cmd, check=True)
 
-        log_info(f"[backup_data] {service}: 전체 백업 완료 → {dst_dir}")
+        log_info(f"[backup_data] {service}: data 백업 완료 → {dst_dir}")
         return dst_dir
 
     except subprocess.CalledProcessError as e:
         log_error(f"[backup_data] {service}: 백업 실패 - {e}")
         return ""
 
+def restore_data(service: str, backup_path: str) -> bool:
+    """
+    백업된 데이터를 서비스 디렉터리로 복원합니다.
+    
+    복원 경로는 config/<service>.yml에서 자동 추출:
+      - postgres: PG_DATA_DIR
+      - vault: VAULT_FILE_DIR
+      - ldap: LDAP_DATA_DIR
+      - bitwarden: {BASE_DIR}/bitwarden/bwdata
+      - 기타: {BASE_DIR}/{service}/data
+    
+    Parameters
+    ----------
+    service : str
+        복원할 서비스 이름
+    backup_path : str
+        백업 디렉터리 경로
+    
+    Returns
+    -------
+    bool
+        복원 성공 시 True, 실패 시 False
+    """
+    
+    # 백업 경로 존재 확인
+    if not os.path.exists(backup_path):
+        log_error(f"[restore_data] 백업 경로 없음: {backup_path}")
+        return False
+    
+    # config/<service>.yml에서 복원 대상 디렉터리 추출
+    restore_target = get_service_data_dir(service)
+    
+    try:
+        # 복원 대상 디렉터리 생성
+        subprocess.run(['sudo', 'mkdir', '-p', restore_target], check=True)
+        
+        # rsync로 복원 (권한/소유권 완전 보존)
+        cmd = [
+            'sudo', 'rsync', '-a', '--numeric-ids',
+            f"{backup_path}/", f"{restore_target}/"
+        ]
+        subprocess.run(cmd, check=True)
+        
+        log_info(f"[restore_data] {service}: 데이터 복원 완료 → {backup_path} → {restore_target}")
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        log_error(f"[restore_data] {service}: 복원 실패 - {e}")
+        return False
+
 def copy_template(service: str) -> bool:
     """
-    템플릿 디렉터리를 서비스 디렉터리로 덮어쓰기합니다 (root 권한).
-    Bitwarden의 경우 bwdata 전체 제외 (설치 스크립트가 생성해야 함).
+    멱등성복사
+    postgres 예외설정:
+        - 최초구동 시 data 폴더가 비어있지 않으면 컨테이너 구동되지 않음.
+        - TLS 설정은 docker-compose.override.yml로 구현
+        - 이 단계에서는 docker-compoose.override.yml이  에서 override를 이용해서 TLS 설정을 할 때 init
+    bitwarden 예외설정:
+        - bwdata를 복사하면 기존설치가 있다고 간주하여 설치가 중단되므로 exclude
     """
     template_dir = f"{PROJECT_ROOT}/template/{service}"
     service_dir = f"{BASE_DIR}/{service}"
 
     try:
         subprocess.run(['sudo', 'mkdir', '-p', service_dir], check=True)
-
-        # Bitwarden 전용: bwdata 전체 제외 + override 제외
         exclude_args = []
+
+        # Bitwarden 전용 exclude 추가
         if service == "bitwarden":
-            exclude_args = [
+            exclude_args.extend([
                 '--exclude', 'bwdata/',
                 '--exclude', 'bwdata/**',
                 '--exclude', 'bwdata/*',
                 '--exclude', 'bwdata/docker/docker-compose.override.yml',
-            ]
+            ])
+        # postgres 전용 exclude 추가
+        if service == "postgres":
+            exclude_args.extend([
+                '--exclude', 'docker-compose.override.yml',
+            ])
 
         cmd = [
             'sudo', 'rsync', '-a', '-i',
@@ -244,6 +343,72 @@ def copy_template(service: str) -> bool:
     except subprocess.CalledProcessError as e:
         log_error(f"[copy_template] 실패: {e.stderr}")
         return False
+
+def fix_postgres_permissions() -> bool:
+    """
+    PostgreSQL 데이터 디렉터리 및 TLS 인증서 권한을 uid:gid = 70:70 으로 정렬.
+    - data 디렉터리: 700 / 70:70
+    - server.key:    600 / 70:70   (TLS 필수 조건)
+    - server.crt:    644 / 70:70 또는 root (문제 없음)
+    - rootCA.crt:    644 / 70:70 또는 root (문제 없음)
+    """
+    data_dir = f"{BASE_DIR}/postgres/data"
+    certs_dir = f"{BASE_DIR}/postgres/certs"
+
+    server_key = f"{certs_dir}/private.key"
+    server_crt = f"{certs_dir}/certificate.crt"
+    root_ca    = f"{certs_dir}/rootCA.crt"
+
+    try:
+        # --------------------------------------------------------
+        # 1) PostgreSQL data 디렉터리 권한 보정
+        # --------------------------------------------------------
+        subprocess.run(["sudo", "mkdir", "-p", data_dir], check=True)
+        subprocess.run(["sudo", "chown", "-R", "70:70", data_dir], check=True)
+        subprocess.run(["sudo", "chmod", "-R", "700", data_dir], check=True)
+        log_info(f"[fix_postgres_permissions] data 디렉터리 설정 완료 → {data_dir} (70:70, 700)")
+
+        # --------------------------------------------------------
+        # 2) TLS 인증서 디렉터리 생성
+        # --------------------------------------------------------
+        subprocess.run(["sudo", "mkdir", "-p", certs_dir], check=True)
+
+        # --------------------------------------------------------
+        # 3) server.key  (PostgreSQL TLS의 가장 중요한 파일)
+        # --------------------------------------------------------
+        if os.path.exists(server_key):
+            subprocess.run(["sudo", "chown", "70:70", server_key], check=True)
+            subprocess.run(["sudo", "chmod", "600", server_key], check=True)
+            log_info(f"[fix_postgres_permissions] private.key 권한 설정 완료 (600, 70:70)")
+        else:
+            log_warn(f"[fix_postgres_permissions] private.key 없음 → {server_key}")
+
+        # --------------------------------------------------------
+        # 4) server.crt
+        # --------------------------------------------------------
+        if os.path.exists(server_crt):
+            subprocess.run(["sudo", "chmod", "644", server_crt], check=True)
+            # 소유자는 postgres여도 되고 root여도 됨 → 변경하지 않음
+            log_info(f"[fix_postgres_permissions] certificate.crt 설정 완료 (644)")
+        else:
+            log_warn(f"[fix_postgres_permissions] certificate.crt 없음 → {server_crt}")
+
+        # --------------------------------------------------------
+        # 5) rootCA.crt
+        # --------------------------------------------------------
+        if os.path.exists(root_ca):
+            subprocess.run(["sudo", "chmod", "644", root_ca], check=True)
+            # 마찬가지로 소유자는 root 또는 postgres 모두 허용됨
+            log_info(f"[fix_postgres_permissions] rootCA.crt 설정 완료 (644)")
+        else:
+            log_warn(f"[fix_postgres_permissions] rootCA.crt 없음 → {root_ca}")
+
+        return True
+
+    except subprocess.CalledProcessError as e:
+        log_error(f"[fix_postgres_permissions] 실패: {e}")
+        return False
+
 
 def extract_env_vars(env_path: str, section: str) -> dict:
     """지정된 섹션(# SECTION) 아래 key=value 쌍을 추출"""
@@ -588,7 +753,6 @@ def start_container(service: str):
             log_error(f"[start_container] 오류 내용: {result.stderr}")
             log_error(f"[start_container] 출력 내용: {result.stdout}")
 
-
 def check_container(service: str, custom_check=None) -> bool:
     """
     AI4INFRA 간결 체크 버전
@@ -682,10 +846,6 @@ def check_container(service: str, custom_check=None) -> bool:
     log_info(f"[check_container] 기본 점검 완료(PASS) → {service}")
     return True
 
-
-
-
-# Vault HTTP status code → 의미 매핑 (공식 문서 기반)
 VAULT_HEALTH_MAP = {
     200: "OK (initialized, unsealed, active)",
     429: "Standby (initialized, unsealed, standby)",
@@ -696,7 +856,6 @@ VAULT_HEALTH_MAP = {
     503: "Sealed (unsealed required)",
     530: "Node removed from cluster",
 }
-
 
 def check_vault(service: str) -> bool:
     container = f"ai4infra-{service}"
@@ -767,25 +926,199 @@ def check_vault(service: str) -> bool:
 
     return True
 
-
-
-# -------------------------------------------------------
-# PostgreSQL 점검 함수
-# -------------------------------------------------------
-
 def check_postgres(service: str) -> bool:
+    """
+    PostgreSQL healthcheck + TLS 심층 점검(5단계)
+    1) Docker health (healthy)
+    2) SELECT 1
+    3) TLS 기본 상태 점검 (SHOW ssl)
+    4) TLS 비활성 원인 자동 분석 (5가지 전부)
+    """
+
     container = f"ai4infra-{service}"
 
-    # SELECT 1 테스트
+    # ========================================
+    # 1) Docker health 확인
+    # ========================================
+    for attempt in range(60):
+        ps = subprocess.run(
+            f"sudo docker ps --filter name={container} --format '{{{{.Status}}}}'",
+            shell=True, text=True, capture_output=True
+        )
+        status = ps.stdout.strip().lower()
+
+        if "healthy" in status:
+            log_info(f"[check_postgres] Docker healthcheck 통과 (healthy) → {attempt+1}번째 시도")
+            break
+
+        if "unhealthy" in status:
+            log_error("[check_postgres] Docker healthcheck: unhealthy")
+            return False
+
+        log_info(f"[check_postgres] PostgreSQL 준비중... 상태={status} → 재시도 ({attempt+1}/60)")
+        time.sleep(1)
+    else:
+        log_error("[check_postgres] 60초 동안 healthy 상태가 되지 않음")
+        return False
+
+    # ========================================
+    # 2) SELECT 1 확인
+    # ========================================
     result = subprocess.run(
         f"sudo docker exec {container} psql -U postgres -c 'SELECT 1;'",
         shell=True, text=True, capture_output=True
     )
-
     if "1 row" in result.stdout:
-        log_info("[check_postgres] SELECT 1 성공")
-        return True
+        log_info("[check_postgres] SELECT 1 성공 → PostgreSQL 정상 동작")
+    else:
+        log_warn("[check_postgres] SELECT 1 실패 (그러나 healthcheck는 정상입니다)")
 
-    log_error("[check_postgres] SELECT 1 실패")
-    return False            
+    # ========================================
+    # 3) TLS 기본 상태 확인
+    # ========================================
+    log_info("[check_postgres] TLS 설정 점검 시작")
 
+    tls_status = subprocess.run(
+        f"sudo docker exec {container} psql -U postgres -t -c \"SHOW ssl;\"",
+        shell=True, text=True, capture_output=True
+    )
+    ssl_value = tls_status.stdout.strip().lower()
+
+    if ssl_value == "on":
+        log_info("[check_postgres] TLS 활성화 확인됨 (ssl=on)")
+    else:
+        log_warn(f"[check_postgres] TLS 비활성화 (ssl={ssl_value}) → 자동 원인 분석 시작")
+        return check_postgres_tls_diagnostics(container)
+
+
+    # TLS가 실제 "on"이면 기본 인증 파일 경로와 존재 여부는 별도 점검
+    return check_postgres_tls_diagnostics(container, tls_must_be_on=True)
+
+
+
+# =====================================================================
+# TLS 자동 진단 로직
+# =====================================================================
+
+def check_postgres_tls_diagnostics(container: str, tls_must_be_on: bool=False) -> bool:
+    """
+    PostgreSQL TLS 비활성(ssl=off) 또는 TLS 오류 원인 자동 분석
+
+    자동 분석 항목 5개:
+      1) 실제 적용 중인 postgresql.conf 파일 경로 검증(SHOW config_file)
+      2) 설정파일(postgresql.conf)에 ssl=on이 존재하는지 확인
+      3) SHOW ssl_cert_file / ssl_key_file / ssl_ca_file 값 확인
+      4) 인증서/키 파일 존재 여부 확인
+      5) key 파일 권한/소유자(postgres, 600) 검증
+    """
+
+    log_info("[TLS-DIAG] PostgreSQL TLS 진단 시작")
+
+    # ---------------------------
+    # ① 실제 config_file 경로 확인
+    # ---------------------------
+    cfg = run_psql_show(container, "config_file")
+    data_dir = run_psql_show(container, "data_directory")
+
+    log_info(f"[TLS-DIAG] config_file = {cfg}")
+    log_info(f"[TLS-DIAG] data_directory = {data_dir}")
+
+    if "postgresql.conf" not in cfg:
+        log_error("[TLS-DIAG] postgresql.conf 파일 경로 비정상 → override 적용 안됨 가능성이 매우 높습니다.")
+
+
+    # ---------------------------
+    # ② 설정파일 내부에서 SSL 항목 확인
+    # ---------------------------
+    grep_ssl = subprocess.run(
+        f"sudo docker exec {container} grep -iE '^[ ]*ssl' {cfg}",
+        shell=True, text=True, capture_output=True
+    )
+
+    if grep_ssl.returncode != 0:
+        log_error("[TLS-DIAG] postgresql.conf에서 ssl 관련 항목을 찾을 수 없습니다.")
+    else:
+        log_info(f"[TLS-DIAG] postgresql.conf 내 SSL 항목:\n{grep_ssl.stdout.strip()}")
+
+
+    # ---------------------------
+    # ③ SHOW ssl_* 파라미터 확인
+    # ---------------------------
+    ssl_cert = run_psql_show(container, "ssl_cert_file")
+    ssl_key  = run_psql_show(container, "ssl_key_file")
+    ssl_ca   = run_psql_show(container, "ssl_ca_file")
+
+    log_info(f"[TLS-DIAG] ssl_cert_file = {ssl_cert}")
+    log_info(f"[TLS-DIAG] ssl_key_file  = {ssl_key}")
+    log_info(f"[TLS-DIAG] ssl_ca_file   = {ssl_ca}")
+
+    # ---------------------------
+    # ④ 파일 존재 여부 테스트
+    # ---------------------------
+    missing = False
+    for p in [ssl_cert, ssl_key, ssl_ca]:
+        if not file_exists_in_container(container, p):
+            log_error(f"[TLS-DIAG] 파일 없음 → {p}")
+            missing = True
+        else:
+            log_info(f"[TLS-DIAG] 파일 존재 확인 → {p}")
+
+    # ---------------------------
+    # ⑤ key 파일 권한 및 소유자 검증
+    # ---------------------------
+    if file_exists_in_container(container, ssl_key):
+        perm = run_stat(container, ssl_key)
+        log_info(f"[TLS-DIAG] key 파일 권한 = {perm}")
+
+        if not perm.startswith("600"):
+            log_error(f"[TLS-DIAG] key 파일 권한 오류 → 600 이어야 합니다: {ssl_key}")
+            missing = True
+        
+        owner = run_owner(container, ssl_key)
+        log_info(f"[TLS-DIAG] key 파일 소유자 = {owner}")
+
+        if "postgres:postgres" not in owner:
+            log_error(f"[TLS-DIAG] key 파일 소유자 오류 → postgres:postgres 이어야 합니다.")
+            missing = True
+
+    # ---------------------------
+    # TLS가 반드시 켜져야 하는 모드일 때
+    # ---------------------------
+    if tls_must_be_on:
+        ssl_state = run_psql_show(container, "ssl")
+        if ssl_state != "on":
+            log_error("[TLS-DIAG] TLS가 켜져 있어야 하는데 ssl=off 입니다.")
+            return False
+
+    if missing:
+        log_error("[TLS-DIAG] TLS 설정 오류 감지됨")
+        return False
+
+    log_info("[TLS-DIAG] TLS 설정 및 파일 검증 완료 (모두 OK)")
+    return True
+
+
+# =====================================================================
+# 헬퍼 함수
+# =====================================================================
+
+def run_psql_show(container: str, name: str) -> str:
+    cmd = f"sudo docker exec {container} psql -U postgres -t -c \"SHOW {name};\""
+    res = subprocess.run(cmd, shell=True, text=True, capture_output=True)
+    return res.stdout.strip()
+
+def file_exists_in_container(container: str, path: str) -> bool:
+    test = subprocess.run(f"sudo docker exec {container} test -f '{path}'", shell=True)
+    return test.returncode == 0
+
+def run_stat(container: str, path: str) -> str:
+    cmd = f"sudo docker exec {container} stat -c '%a' '{path}'"
+    res = subprocess.run(cmd, shell=True, text=True, capture_output=True)
+    return res.stdout.strip()
+
+def run_owner(container: str, path: str) -> str:
+    cmd = f"sudo docker exec {container} stat -c '%U:%G' '{path}'"
+    res = subprocess.run(cmd, shell=True, text=True, capture_output=True)
+    return res.stdout.strip()
+
+          
