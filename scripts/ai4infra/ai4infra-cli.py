@@ -69,27 +69,9 @@ def install(
     reset: bool = typer.Option(False, "--reset", help="기존 데이터/컨테이너 삭제 후 완전 재설치 (개발용)"),
     backup: bool = typer.Option(False, "--backup", help="데이터 백업 → 서비스 폴더 삭제 → 설치 → 데이터 복원")
 ):
-    """
-    AI4INFRA 서비스 설치
-
-    모드:
-      - 기본 (옵션 없음): 멱등성 설치 (컨테이너 중지 → 템플릿 덮어쓰기 → 재시작)
-      - --reset: 완전 재설치 (데이터 포함 전체 삭제 후 설치)
-      - --backup: 데이터 보존 재설치 (데이터 백업 → 전체 삭제 → 설치 → 데이터 복원)
-
-    단계:
-      1) 컨테이너 중지
-      2) 데이터 처리 (reset/backup/멱등성)
-      3) 템플릿 복사
-      4) 서비스별 사전 준비 (bitwarden 설치 등)
-      5) 서비스별 인증서 생성
-      6) 환경파일(.env) 생성
-      7) 컨테이너 시작
-    """
-
+    
     services = list(SERVICES) if service == "all" else [service]
     for svc in services:
-        print("####################################################################################")
         service_dir = f"{BASE_DIR}/{svc}"
         backup_path = None
 
@@ -98,34 +80,29 @@ def install(
 
         # 2) 데이터 처리 (3가지 모드)
         if reset:
-            # 모드 1: 완전 재설치 (데이터 포함 전체 삭제)
-            log_info(f"[install] --reset 모드: {svc} 전체 삭제 (데이터 포함)")
+            log_info(f"[install] --reset 모드: {svc} 서비스폴더 삭제진행")
             subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
-            log_info(f"[install] 삭제 완료: {service_dir}")
+            log_info(f"[install] {service_dir} 삭제 완료")
 
         elif backup:
-            # 모드 2: 데이터 보존 재설치 (백업 → 삭제 → 복원)
-            log_info(f"[install] --backup 모드: {svc} 데이터 백업 시작")
+            log_info(f"[install] --backup 모드: {svc} 데이터백업 시작")
             backup_path = backup_data(svc)
             if not backup_path:
                 log_error(f"[install] {svc} 백업 실패 → 설치 중단")
                 continue
             
-            log_info(f"[install] 백업 완료 → {backup_path}")
-            log_info(f"[install] {svc} 서비스 폴더 삭제")
+            log_info(f"[install] 데이터백업 완료 → {backup_path}")
+            log_info(f"[install] {svc} 서비스폴더 삭제진행")
             subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
-            log_info(f"[install] 삭제 완료: {service_dir}")
+            log_info(f"[install] {service_dir} 삭제 완료")
 
         else:
-            # 모드 3: 멱등성 설치 (기존 파일 유지, 템플릿만 덮어쓰기)
             log_info(f"[install] 옵션 없음 = 멱등성 모드: {svc} 기존 데이터∙설정 유지")
 
         # 3) 템플릿 복사
         copy_template(svc)
 
-        # ---------------------------------------------------------
         # 4) Bitwarden 설치 단계 (파일 구조 준비)
-        # ---------------------------------------------------------
         if svc == "bitwarden":
             ok = install_bitwarden()
             if not ok:
@@ -133,38 +110,24 @@ def install(
                 continue
             apply_override("bitwarden")
 
-        # ---------------------------------------------------------
         # 5) 서비스별 인증서 생성 (Bitwarden 설치 완료 후)
-        # ---------------------------------------------------------
-        create_service_certificate(
-            service=svc,
-            overwrite=False,
-            san=None  # 기본 SAN 자동 생성
-        )
+        create_service_certificate(service=svc, san=None)
 
-        # ---------------------------------------------------------
         # 6) 서비스별 권한 설정 (데이터/인증서 디렉터리)
-        # ---------------------------------------------------------
         apply_service_permissions(svc)
 
-        # ---------------------------------------------------------
         # 7) --backup 모드: 데이터 복원
-        # ---------------------------------------------------------
         if backup and backup_path:
             if not restore_data(svc, backup_path):
                 log_error(f"[install] {svc} 데이터 복원 실패")
                 continue
 
-        # ---------------------------------------------------------
-        # 7) 환경파일 생성 (.env)
-        # ---------------------------------------------------------
+        # 8) 환경파일 생성 (.env)
         env_path = generate_env(svc)
         if not env_path:
             log_info(f"[install] {svc}: .env 생성 생략")
 
-        # ---------------------------------------------------------
-        # 8) 컨테이너 시작
-        # ---------------------------------------------------------
+        # 9) 컨테이너 시작
         start_container(svc)
 
         # -----------------------------

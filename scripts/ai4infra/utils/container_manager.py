@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-"""
-파일명: scripts/ai4infra/utils/container_manager.py
-목적: 각 컨테이너를 설치/백업/복구에 필요한 기초 함수들을 정의하는 파일을 분리하여 ai4infra-cli.py의 가독성과 재활용을 높이기 위함.
-설명:
-
-변경이력:
-  - 2025-11-05: create_user 구현 (BenKorea)
-  - 2025-10-30: 최초 구현 (BenKorea)
-"""
-
 import subprocess
 from pathlib import Path
 from typing import List, Callable, Optional
@@ -31,48 +20,6 @@ BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
 SERVICES = ['postgres', 'vault', 'elk', 'ldap', 'bitwarden']
 
 def create_user(username: str, password: str = "bit") -> bool:
-    """
-    지정된 시스템 사용자 생성
-
-    주요단계:
-    1) `id {username}` 명령으로 사용자 존재 여부를 확인합니다.
-    2) 사용자가 존재하지 않으면 `useradd -m -s /bin/bash {username}`으로 생성합니다.
-    3) `chpasswd` 명령을 이용해 비밀번호를 설정합니다.
-
-    Parameters
-    ----------
-    username : str
-        생성할 사용자 계정 이름.
-    password : str, optional
-        새 계정에 설정할 초기 비밀번호. 기본값은 "bit"입니다.
-
-    Returns
-    -------
-    bool
-        생성 여부와 관계없이 사용자가 존재하는 경우 True를 반환하고,  
-        생성 시도 후 성공한 경우에도 True를 반환합니다.  
-        명령 실행 오류가 발생하면 False를 반환합니다.
-
-    Raises
-    ------
-    None
-        시스템 명령 실행 실패는 False 반환으로 처리하며 예외를 전달하지 않습니다.
-
-    Notes
-    -----
-    - 이 함수는 내부 로깅을 수행하며, 반환값을 기반으로 호출자가 다음 단계를 진행할지 결정하는 구조입니다.
-    - 사용자 계정은 홈 디렉터리(`/home/{username}`)와 Bash 셸(`/bin/bash`)을 기본 구성으로 생성합니다.
-    - 보안 이유로 비밀번호 설정은 로컬 `chpasswd` 명령을 사용합니다.
-
-    Future Considerations
-    ---------------------
-    - 타 컨테이너 서비스(PostgreSQL, ELK 등)도 독립 계정이 필요한 경우 uid/gid 매핑 전략을 추가 검토할 수 있습니다.
-    - 외부에서 비밀번호를 안전하게 주입하기 위한 별도 인터페이스 또는 Vault 연동이 필요할 수 있습니다.
-
-    History
-    -------
-    2025-11-18 : Doc-string 수정 (BenKorea)
-    """
 
     try:
         # 1) 사용자 존재 여부 확인
@@ -139,7 +86,7 @@ def stop_container(search_pattern: str) -> bool:
     for c in containers:
         result = subprocess.run(['sudo', 'docker', 'stop', c], capture_output=True, text=True)
         if result.returncode == 0:
-            log_info(f"[stop_container] {c} 중지 완료")
+            log_info(f"[stop_container] {c} 컨테이너 중지함")
         else:
             log_error(f"[stop_container] {c} 중지 실패: {result.stderr.strip()}")
 
@@ -284,11 +231,6 @@ def restore_data(service: str, backup_path: str) -> bool:
         return False
 
 def copy_template(service: str) -> bool:
-    """
-    템플릿을 BASE_DIR/<service>로 복사한다.
-    owner/group/timestamp 차이는 무시하고
-    파일 내용 기반으로만 변경 여부를 판단한다.
-    """
     template_dir = f"{PROJECT_ROOT}/template/{service}"
     service_dir = f"{BASE_DIR}/{service}"
 
@@ -331,7 +273,7 @@ def copy_template(service: str) -> bool:
             log_info(f"[copy_template] {service_dir}: 변경 사항 없음")
             return True
 
-        log_debug(f"[copy_template] 변경 감지됨 (dry-run 결과):\n{changed}")
+        log_debug(f"[copy_template] (dry-run 결과):\n{changed}")
 
         # -------------------------------------
         # 실제 복사 명령 (dry-run과 동일 + --dry-run 제거)
@@ -347,7 +289,7 @@ def copy_template(service: str) -> bool:
 
         subprocess.run(real_cmd, check=True)
 
-        log_info(f"[copy_template] 변경 반영 완료 → {service_dir}")
+        log_info(f"[copy_template] 완료 → {service_dir}")
         return True
 
     except subprocess.CalledProcessError as e:
@@ -356,8 +298,6 @@ def copy_template(service: str) -> bool:
     except Exception as e:
         log_error(f"[copy_template] 예외 발생: {e}")
         return False
-
-
 
 def extract_env_vars(env_path: str, section: str) -> dict:
     """지정된 섹션(# SECTION) 아래 key=value 쌍을 추출"""
@@ -403,20 +343,33 @@ def extract_config_vars(service: str) -> dict:
     return sub_vars(data)
 
 def generate_env(service: str) -> str:
-    """
-    .env와 config/*.yml에서 변수 추출 후 병합하여
-    BASE_DIR/service/.env 생성.
 
-    개선 사항:
-    - merged 내용이 비어 있으면 .env 생성하지 않음
-    - 소유권은 bitwarden만 bitwarden:bitwarden
-      그 외 서비스는 root 소유 유지
-    """
-    # 변수 추출
+    # 1) 기본 변수 추출
     env_vars = extract_env_vars(".env", service)
     config_vars = extract_config_vars(service)
-    merged = {**env_vars, **config_vars}
 
+    # 2) config_vars에서 환경변수 후보만 필터링
+    #    내부 운영 설정(path, permissions, tls)은 .env에 기록 금지
+    exclude_keys = {"path", "permissions", "tls"}
+    config_env_vars = {k: v for k, v in config_vars.items()
+                       if k not in exclude_keys and not isinstance(v, dict)}
+
+    # 병합: .env > config_ENV > path→DATA_DIR 변환 변수
+    merged = {**env_vars, **config_env_vars}
+
+    # 3) path.* → DATA_DIR / CERTS_DIR / CONF_DIR 자동 생성
+    paths = config_vars.get("path", {})
+
+    if "data" in paths:
+        merged["DATA_DIR"] = paths["data"]
+
+    if "private_key" in paths:
+        merged["CERTS_DIR"] = str(Path(paths["private_key"]).parent)
+
+    if "config" in paths:
+        merged["CONF_DIR"] = str(Path(paths["config"]).parent)
+
+    # 4) 저장할 디렉터리
     service_dir = Path(f"{BASE_DIR}/{service}")
     output_file = service_dir / ".env"
 
@@ -424,50 +377,29 @@ def generate_env(service: str) -> str:
         log_info(f"[generate_env] 경로 없음: {service_dir}")
         return ""
 
-    # merged가 비어 있으면 파일 생성할 필요 없음
     if not merged:
         log_info(f"[generate_env] {service} 환경변수 없음 → .env 생성 생략")
         return ""
 
-    # 임시 파일에 작성
+    # 5) tmp 파일 작성
     import tempfile
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as tmp:
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, encoding="utf-8") as tmp:
         for k, v in merged.items():
             tmp.write(f"{k}={v}\n")
         tmp_path = tmp.name
 
+    # 6) 파일 이동 및 권한
     try:
-        # sudo로 이동
-        subprocess.run(
-            ["sudo", "mv", tmp_path, str(output_file)],
-            check=True,
-            capture_output=True,
-            text=True
-        )
+        subprocess.run(["sudo", "mv", tmp_path, str(output_file)],
+                       check=True, capture_output=True, text=True)
 
-        # 소유권 결정
-        # 비트워든만 bitwarden 사용자, 나머지는 root
         owner = "bitwarden" if service == "bitwarden" else "root"
+        subprocess.run(["sudo", "chown", f"{owner}:{owner}", str(output_file)],
+                       check=True, capture_output=True, text=True)
+        subprocess.run(["sudo", "chmod", "600", str(output_file)],
+                       check=True, capture_output=True, text=True)
 
-        subprocess.run(
-            ["sudo", "chown", f"{owner}:{owner}", str(output_file)],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-
-        # 권한 설정
-        subprocess.run(
-            ["sudo", "chmod", "600", str(output_file)],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-
-        log_info(
-            f"[generate_env] {service.upper()} .env 생성 완료 → {output_file} "
-            f"(소유자: {owner})"
-        )
+        log_info(f"[generate_env] {service.upper()} .env 생성 완료 → {output_file} (소유자: {owner})")
 
     except subprocess.CalledProcessError as e:
         log_error(f"[generate_env] 파일 이동/권한 설정 실패: {e.stderr}")
@@ -478,20 +410,6 @@ def generate_env(service: str) -> str:
     return str(output_file)
 
 def setup_usb_secrets() -> bool:
-    """USB 경로에 암호화된 비밀번호 파일 배포
-    
-    동작:
-    - /mnt/usb 디렉터리 생성
-    - template/usb의 *.enc 파일을 /mnt/usb로 복사 (비어있을 경우만)
-    - 파일 권한을 600으로 설정 (소유자만 읽기 가능)
-    
-    반환:
-    - True: 성공
-    - False: 실패
-    
-    변경이력:
-    - 2025-11-15: 최초 구현 (BenKorea)
-    """
     usb_dir = "/mnt/usb"
     template_usb = f"{PROJECT_ROOT}/template/usb"
     
@@ -536,14 +454,6 @@ def setup_usb_secrets() -> bool:
         return False
     
 def install_bitwarden() -> bool:
-    """
-    Bitwarden 설치 여부만 확인하고,
-    설치되지 않은 경우 사용자에게 수동 설치를 안내하는 최소 버전.
-
-    - 이미 설치되어 있으면 바로 True 반환
-    - 설치되지 않았으면 bitwarden 계정으로 설치 안내
-    - 설치 완료 여부만 확인 후 종료
-    """
     bitwarden_dir = f"{BASE_DIR}/bitwarden"
     bitwarden_script = f"{bitwarden_dir}/bitwarden.sh"
     compose_file = f"{bitwarden_dir}/bwdata/docker/docker-compose.yml"
@@ -574,15 +484,6 @@ def install_bitwarden() -> bool:
         return False
 
 def apply_override(service: str) -> bool:
-    """
-    Bitwarden용 docker-compose.override.yml 적용.
-
-    동작:
-      - 템플릿이 없으면 패스
-      - Bitwarden이 설치 완료된 경우(bwdata/docker 존재)만 적용
-      - 기존 override가 있으면 덮어쓰지 않음
-      - 소유권/권한은 Bitwarden 설치 스크립트 정책 그대로 유지
-    """
     if service != "bitwarden":
         log_debug(f"[apply_override] {service}: override 적용 대상 아님")
         return True
@@ -661,7 +562,7 @@ def start_container(service: str):
         service_dir = f"{BASE_DIR}/{service}"
         compose_file = f"{service_dir}/docker-compose.yml"
     
-        log_debug(f"[start_container] 시작: service_dir={service_dir}")
+        log_debug(f"[start_container] 구동시작: service_dir={service_dir}")
         log_debug(f"[start_container] compose_file={compose_file}")
     
         # docker-compose.yml 존재 확인
@@ -695,13 +596,6 @@ def start_container(service: str):
             log_error(f"[start_container] 출력 내용: {result.stdout}")
 
 def check_container(service: str, custom_check=None) -> bool:
-    """
-    AI4INFRA 간결 체크 버전
-    - Bitwarden: ai4infra-bitwarden-* 모든 컨테이너 health 종합 판단
-    - Vault:    health 없음 → Up 이면 PASS
-    - 기타:     Up 상태면 PASS
-    """
-
     # 1) Bitwarden만 prefix 매칭 필요
     if service == "bitwarden":
         filter_name = "ai4infra-bitwarden-"
@@ -868,13 +762,6 @@ def check_vault(service: str) -> bool:
     return True
 
 def check_postgres(service: str) -> bool:
-    """
-    PostgreSQL healthcheck + TLS 심층 점검(5단계)
-    1) Docker health (healthy)
-    2) SELECT 1
-    3) TLS 기본 상태 점검 (SHOW ssl)
-    4) TLS 비활성 원인 자동 분석 (5가지 전부)
-    """
 
     container = f"ai4infra-{service}"
 
@@ -936,17 +823,6 @@ def check_postgres(service: str) -> bool:
     return check_postgres_tls_diagnostics(container, tls_must_be_on=True)
 
 def check_postgres_tls_diagnostics(container: str, tls_must_be_on: bool=False) -> bool:
-    """
-    PostgreSQL TLS 비활성(ssl=off) 또는 TLS 오류 원인 자동 분석
-
-    자동 분석 항목 5개:
-      1) 실제 적용 중인 postgresql.conf 파일 경로 검증(SHOW config_file)
-      2) 설정파일(postgresql.conf)에 ssl=on이 존재하는지 확인
-      3) SHOW ssl_cert_file / ssl_key_file / ssl_ca_file 값 확인
-      4) 인증서/키 파일 존재 여부 확인
-      5) key 파일 권한/소유자(postgres, 600) 검증
-    """
-
     log_info("[TLS-DIAG] PostgreSQL TLS 진단 시작")
 
     # ---------------------------

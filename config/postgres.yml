@@ -5,9 +5,17 @@
 #  - 민감정보 및 BASE_DIR은 프로젝트 .env, config/<service>.yml에서는 아래의 아래의 변수들을 파싱하여 {$BASE_DIR}/service/.env 생성할 때의 설정값으로 사용
 #  - copy_template() 이후 컨테이너 내부의 소유권과 마운트되는 디렉토리의 소유권을 일치시키기 위한 설정
 # 변경이력
+#  - 2025-11-25: path 블록으로 구조 통일 (BenKorea)
 #  - 2025-11-22: permissoin 설정 추가 (BenKorea)   
 #  - 2025-11-04: 중복 root key 제거함 (BenKorea)   
 #####################################
+
+path:
+  data: ${BASE_DIR}/postgres/data
+  config: ${BASE_DIR}/postgres/config/postgresql.conf
+  private_key: ${BASE_DIR}/postgres/certs/private.key
+  service_crt: ${BASE_DIR}/postgres/certs/certificate.crt
+  root_ca: ${BASE_DIR}/postgres/certs/rootCA.crt
 
 permissions:
   uid: 70
@@ -17,13 +25,7 @@ permissions:
   cert_mode: "644"
 
 tls:
-  enable: true  
+  enable: true
 
 POSTGRES_DB: ai4infra
-
-# BASE_DIR은 .env에서 공급
-PG_DATA_DIR: ${BASE_DIR}/postgres/data
-PG_CERTS_DIR: ${BASE_DIR}/postgres/certs
-PG_CONF_DIR: ${BASE_DIR}/postgres/config
-
-PG_PORT: 5432
+PORT: 5432

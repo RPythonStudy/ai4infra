@@ -408,96 +408,54 @@ def fix_bitwarden_cert_permissions() -> None:
     except subprocess.CalledProcessError as e:
         log_error(f"[fix_bitwarden_cert_permissions] 실패: {e}")
 
-def create_service_certificate(
-    service: str,
-    overwrite: bool = False,
-    san: str | None = None,
-) -> bool:
-    """
-    서비스 full chain 인증서 생성 (최상위 함수)
-
-    Parameters
-    ----------
-    service : str
-        서비스 이름(vault, bitwarden, postgres 등)
-    overwrite : bool
-        기존 key/cert/ca 파일이 있어도 덮어쓸지 여부
-    san : str, optional
-        Subject Alternative Name 문자열.
-        None이면 build_default_san(service)를 사용.
-
-    Returns
-    -------
-    bool
-        전체 과정 성공 여부
-    """
+def create_service_certificate(service: str, san: str | None = None) -> bool:
     try:
-        # 0) Root CA 준비
-        if not generate_root_ca_if_needed():
-            return False
+        cfg_file = Path(PROJECT_ROOT or ".") / "config" / f"{service}.yml"
+        cfg = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) if cfg_file.exists() else {}
+        path_cfg = cfg.get("path", {})
 
+        # 환경변수 치환 함수
+        def sub(v: str) -> str:
+            if not isinstance(v, str):
+                return v
+            v = v.replace("${BASE_DIR}", BASE_DIR or "")
+            v = v.replace("${PROJECT_ROOT}", PROJECT_ROOT or "")
+            return v
+
+        # 경로 결정 (YAML 우선)
+        key_path = Path(sub(path_cfg.get("private_key", f"{BASE_DIR}/{service}/certs/private.key")))
+        csr_path = key_path.parent / "request.csr"
+        cert_path = Path(sub(path_cfg.get("service_crt", f"{BASE_DIR}/{service}/certs/certificate.crt")))
+        root_ca_dst = Path(sub(path_cfg.get("root_ca", f"{BASE_DIR}/{service}/certs/rootCA.crt")))
         ca_path = CA_CERT
 
-        # 1) 경로 구성
-        key_path, csr_path, cert_path = get_service_cert_paths(service)
-
-        if key_path.exists() or cert_path.exists():
-            if not overwrite:
-                log_info(
-                    f"[create_service_certificate] {service} 인증서 이미 존재"
-                )
-
-                return True
+        # 이미 존재하면 skip + rootCA만 복사
+        if key_path.exists() and cert_path.exists():
+            subprocess.run(["sudo", "mkdir", "-p", str(root_ca_dst.parent)], check=False)
+            subprocess.run(["sudo", "cp", "-a", str(ca_path), str(root_ca_dst)], check=False)
+            return True
 
         san_value = san or build_default_san(service)
 
-        # 1) key 생성
         if not create_service_key(service, key_path):
             return False
-
-        # 2) CSR 생성
         if not create_service_csr(service, key_path, csr_path):
             return False
-
-        # 3) CA 서명 (cert 생성)
         if not sign_service_cert_with_ca(service, csr_path, cert_path, san_value):
             return False
-
-        # 4) chain 검증
         if not verify_service_cert(service, cert_path):
             return False
 
-        # 5) 서비스 디렉터리로 Root CA 복사
-        if not deploy_root_ca_to_service(service, ca_path):
-            return False
+        subprocess.run(["sudo", "mkdir", "-p", str(root_ca_dst.parent)], check=True)
+        subprocess.run(["sudo", "cp", "-a", str(ca_path), str(root_ca_dst)], check=True)
 
-        log_info(f"[create_service_certificate] {service} full chain 생성 완료")
         return True
 
     except Exception as e:
-        log_error(f"[create_service_certificate] 예외 발생: {e}")
+        log_error(f"[create_service_certificate] {e}")
         return False
 
 def apply_service_permissions(service: str) -> bool:
-    """
-    config/<service>.yml 의 permissions 섹션을 읽어
-    서비스 디렉터리 및 마운트 폴더(데이터/인증서)의
-    소유자와 권한을 일괄 설정한다.
-
-    permissions 예시:
-
-        permissions:
-          uid: 70
-          gid: 70
-          data_dir_mode: "700"
-          key_mode: "600"
-          cert_mode: "644"
-
-    - uid/gid: 서비스 디렉터리 전체 chown -R
-    - data_dir_mode: 데이터 디렉터리 chmod
-    - key_mode: 인증서 디렉터리 내 private key chmod
-    - cert_mode: 인증서 디렉터리 내 나머지 crt/pem chmod
-    """
     try:
         config_dir = Path(PROJECT_ROOT or ".") / "config"
         cfg_path = config_dir / f"{service}.yml"

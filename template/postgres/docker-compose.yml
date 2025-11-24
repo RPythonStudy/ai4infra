@@ -13,7 +13,7 @@ services:
     # data 디렉토리(왼쪽) 내부에 certs를 함께 마운트해야 함
     volumes:
       # 데이터 파일
-      - ${PG_DATA_DIR:-/opt/ai4infra/postgres/data}:/var/lib/postgresql/data
+      - ${DATA_DIR:-/opt/ai4infra/postgres/data}:/var/lib/postgresql/data
 
 
     healthcheck:
@@ -23,7 +23,7 @@ services:
       retries: 10
 
     ports:
-      - "${PG_PORT:-5432}:5432"
+      - "${PORT:-5432}:5432"
 
     networks:
       - ai4infra
