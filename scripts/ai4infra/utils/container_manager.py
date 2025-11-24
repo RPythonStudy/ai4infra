@@ -285,64 +285,79 @@ def restore_data(service: str, backup_path: str) -> bool:
 
 def copy_template(service: str) -> bool:
     """
-    멱등성복사
-    postgres 예외설정:
-        - 최초구동 시 data 폴더가 비어있지 않으면 컨테이너 구동되지 않음.
-        - TLS 설정은 docker-compose.override.yml로 구현
-        - 이 단계에서는 docker-compoose.override.yml이  에서 override를 이용해서 TLS 설정을 할 때 init
-    bitwarden 예외설정:
-        - bwdata를 복사하면 기존설치가 있다고 간주하여 설치가 중단되므로 exclude
+    템플릿을 BASE_DIR/<service>로 복사한다.
+    owner/group/timestamp 차이는 무시하고
+    파일 내용 기반으로만 변경 여부를 판단한다.
     """
     template_dir = f"{PROJECT_ROOT}/template/{service}"
     service_dir = f"{BASE_DIR}/{service}"
 
     try:
         subprocess.run(['sudo', 'mkdir', '-p', service_dir], check=True)
+
         exclude_args = []
 
-        # Bitwarden 전용 exclude 추가
+        # Bitwarden bwdata 제외
         if service == "bitwarden":
             exclude_args.extend([
                 '--exclude', 'bwdata/',
                 '--exclude', 'bwdata/**',
                 '--exclude', 'bwdata/*',
-                '--exclude', 'bwdata/docker/docker-compose.override.yml',
             ])
-        # postgres 전용 exclude 추가
+
+        # Postgres override 제외
         if service == "postgres":
             exclude_args.extend([
                 '--exclude', 'docker-compose.override.yml',
             ])
 
-        cmd = [
-            'sudo', 'rsync', '-a', '-i',
+        # -------------------------------------
+        # dry-run 명령 (real_cmd와 동일 + --dry-run)
+        # -------------------------------------
+        dry_cmd = [
+            'sudo', 'rsync',
+            '-a', '-i',
+            '--no-t', '--no-o', '--no-g',
+            '--dry-run'
         ] + exclude_args + [
             f"{template_dir}/",
             f"{service_dir}/"
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        dry_run = subprocess.run(dry_cmd, capture_output=True, text=True, check=True)
+        changed = dry_run.stdout.strip()
 
-        if result.stdout.strip():
-            log_debug(f"[copy_template] 변경/복사된 파일:\n{result.stdout.strip()}")
-        else:
-            log_debug("[copy_template] 변경 사항 없음")
+        if not changed:
+            log_info(f"[copy_template] {service_dir}: 변경 사항 없음")
+            return True
 
-        # Bitwarden 소유권 처리
-        if service == "bitwarden":
-            install_script = f"{service_dir}/bitwarden.sh"
-            if os.path.exists(install_script):
-                subprocess.run(['sudo', 'chown', 'bitwarden:bitwarden', install_script], check=False)
-                subprocess.run(['sudo', 'chmod', '+x', install_script], check=False)
+        log_debug(f"[copy_template] 변경 감지됨 (dry-run 결과):\n{changed}")
 
-            subprocess.run(['sudo', 'chown', 'bitwarden:bitwarden', service_dir], check=False)
+        # -------------------------------------
+        # 실제 복사 명령 (dry-run과 동일 + --dry-run 제거)
+        # -------------------------------------
+        real_cmd = [
+            'sudo', 'rsync',
+            '-a',
+            '--no-t', '--no-o', '--no-g'
+        ] + exclude_args + [
+            f"{template_dir}/",
+            f"{service_dir}/"
+        ]
 
-        log_info(f"[copy_template] {service} 템플릿 복사 완료 → {service_dir}")
+        subprocess.run(real_cmd, check=True)
+
+        log_info(f"[copy_template] 변경 반영 완료 → {service_dir}")
         return True
 
     except subprocess.CalledProcessError as e:
         log_error(f"[copy_template] 실패: {e.stderr}")
         return False
+    except Exception as e:
+        log_error(f"[copy_template] 예외 발생: {e}")
+        return False
+
+
 
 def extract_env_vars(env_path: str, section: str) -> dict:
     """지정된 섹션(# SECTION) 아래 key=value 쌍을 추출"""
@@ -662,11 +677,6 @@ def start_container(service: str):
         result = subprocess.run(cmd, capture_output=True, text=True)
         log_debug(f"[start_container] 파일 권한: {result.stdout.strip()}")
     
-        # docker compose 버전 확인 (sudo 사용)
-        cmd = ['sudo', 'docker', 'compose', 'version']
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        # log_debug(f"[start_container] docker compose 버전: {result.stdout.strip()}")
-
         # 실행 명령어 로깅 (sudo 추가)
         cmd = ['sudo', 'docker', 'compose', '-f', compose_file, 'up', '-d']
         log_debug(f"[start_container] 실행 명령: {' '.join(cmd)}")
@@ -674,11 +684,8 @@ def start_container(service: str):
     
         # 컨테이너 시작 (sudo 사용)
         result = subprocess.run(cmd, cwd=service_dir, capture_output=True, text=True)
-    
-        # 상세한 결과 로깅
         log_debug(f"[start_container] 반환코드: {result.returncode}")
-        log_debug(f"[start_container] stdout: {result.stdout}")
-        log_debug(f"[start_container] stderr: {result.stderr}")
+
     
         if result.returncode == 0:
             log_info(f"[start_container] {service} 컨테이너 시작됨")

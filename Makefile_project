@@ -1,3 +1,9 @@
+generate-rootca:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py generate-rootca
+
+create-user:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py create-bitwarden-user	
+
 install-bitwarden:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install bitwarden
 
@@ -36,3 +42,4 @@ restore-vault:
 
 install-all:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install all
+

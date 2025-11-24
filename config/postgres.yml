@@ -16,6 +16,9 @@ permissions:
   key_mode: "600"
   cert_mode: "644"
 
+tls:
+  enable: true  
+
 POSTGRES_DB: ai4infra
 
 # BASE_DIR은 .env에서 공급

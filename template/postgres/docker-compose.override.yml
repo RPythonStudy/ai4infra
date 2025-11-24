@@ -22,5 +22,4 @@ services:
       - /opt/ai4infra/postgres/certs/private.key:/var/lib/postgresql/data/server.key:ro
       - /opt/ai4infra/postgres/certs/rootCA.crt:/var/lib/postgresql/data/rootCA.crt:ro
 
-    # (선택) UID/GID 80:80 강제 설정이 필요하면 다음을 추가
-    # user: "80:80"
+

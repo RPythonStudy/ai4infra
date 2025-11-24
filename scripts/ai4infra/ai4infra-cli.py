@@ -55,6 +55,15 @@ app = typer.Typer(help="AI4INFRA 서비스 관리")
 SERVICES = ('vault', 'bitwarden', 'postgres', 'elk', 'ldap') # 튜플로 선언하어 변경 방지
 
 @app.command()
+def generate_rootca():
+    generate_root_ca_if_needed()
+
+@app.command()
+def create_bitwarden_user():
+    create_user(username="bitwarden")
+    add_docker_group(user="bitwarden")
+    
+@app.command()
 def install(
     service: str = typer.Argument("all", help="설치할 서비스 이름"),
     reset: bool = typer.Option(False, "--reset", help="기존 데이터/컨테이너 삭제 후 완전 재설치 (개발용)"),
@@ -78,14 +87,7 @@ def install(
       7) 컨테이너 시작
     """
 
-    generate_root_ca_if_needed()
-
     services = list(SERVICES) if service == "all" else [service]
-
-    if "bitwarden" in services:
-        create_user("bitwarden")
-        add_docker_group("bitwarden")
-
     for svc in services:
         print("####################################################################################")
         service_dir = f"{BASE_DIR}/{svc}"
@@ -116,7 +118,7 @@ def install(
 
         else:
             # 모드 3: 멱등성 설치 (기존 파일 유지, 템플릿만 덮어쓰기)
-            log_info(f"[install] 멱등성 모드: {svc} 기존 데이터 설정 유지")
+            log_info(f"[install] 옵션 없음 = 멱등성 모드: {svc} 기존 데이터∙설정 유지")
 
         # 3) 템플릿 복사
         copy_template(svc)
@@ -164,8 +166,6 @@ def install(
         # 8) 컨테이너 시작
         # ---------------------------------------------------------
         start_container(svc)
-
-        log_info(f"[install] {svc} 설치 완료")
 
         # -----------------------------
         # 설치 후 자동 점검 단계 추가

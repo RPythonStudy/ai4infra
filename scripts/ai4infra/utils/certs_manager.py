@@ -40,32 +40,15 @@ import yaml
 from dotenv import load_dotenv
 from common.logger import log_info, log_warn, log_error
 
-
-# -------------------------------------------------------------------
-# 환경변수 및 상수
-# -------------------------------------------------------------------
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv("BASE_DIR", "/opt/ai4infra")
-
-if not BASE_DIR:
-    log_warn("[certs_manager] BASE_DIR 환경변수를 찾을 수 없습니다.")
-
-# Bitwarden 고정 도메인
 BITWARDEN_DOMAIN = "bitwarden.ai4infra.internal"
-
-
-# -------------------------------------------------------------------
-# Root CA 경로 정의 (전역 기준)
-# -------------------------------------------------------------------
 CA_DIR = Path(f"{BASE_DIR}/certs/ca")
 CA_KEY = CA_DIR / "rootCA.key"
 CA_CERT = CA_DIR / "rootCA.pem"  # 전역 Root CA 인증서 (PEM)
 
 
-# -------------------------------------------------------------------
-# Root CA 생성
-# -------------------------------------------------------------------
 def create_root_ca(overwrite: bool = False) -> bool:
     """
     Root CA 생성
@@ -127,10 +110,6 @@ def create_root_ca(overwrite: bool = False) -> bool:
         log_error(f"[create_root_ca] 예외 발생: {e}")
         return False
 
-
-# -------------------------------------------------------------------
-# Root CA 검증
-# -------------------------------------------------------------------
 def verify_root_ca() -> bool:
     """
     Root CA 인증서 검증
@@ -166,10 +145,6 @@ def verify_root_ca() -> bool:
         log_error(f"[verify_root_ca] 예외 발생: {e}")
         return False
 
-
-# -------------------------------------------------------------------
-# Root CA 없으면 자동 생성
-# -------------------------------------------------------------------
 def generate_root_ca_if_needed() -> bool:
     """
     Root CA가 없으면 새로 생성하고, 있으면 그대로 사용
@@ -181,11 +156,6 @@ def generate_root_ca_if_needed() -> bool:
     log_info("[generate_root_ca_if_needed] Root CA 없음 → 새로 생성합니다.")
     return create_root_ca(overwrite=False)
 
-
-
-# -------------------------------------------------------------------
-# 서비스별 key/cert 경로 헬퍼
-# -------------------------------------------------------------------
 def get_service_cert_paths(service: str) -> tuple[Path, Path, Path]:
     """
     서비스별 key, csr, cert 경로를 반환
@@ -205,10 +175,6 @@ def get_service_cert_paths(service: str) -> tuple[Path, Path, Path]:
     cert_path = base / "certificate.crt"
     return key_path, csr_path, cert_path
 
-
-# -------------------------------------------------------------------
-# SAN 기본값 생성
-# -------------------------------------------------------------------
 def build_default_san(service: str) -> str:
     """
     서비스 이름을 기반으로 기본 SubjectAltName 문자열을 구성
@@ -228,10 +194,6 @@ def build_default_san(service: str) -> str:
     san_parts = [f"DNS:{d}" for d in dns_entries] + [f"IP:{ip}" for ip in ip_entries]
     return ",".join(san_parts)
 
-
-# -------------------------------------------------------------------
-# 서비스 key 생성
-# -------------------------------------------------------------------
 def create_service_key(service: str, key_path: Path) -> bool:
     """
     서비스 private key 생성
@@ -253,10 +215,6 @@ def create_service_key(service: str, key_path: Path) -> bool:
         log_error(f"[create_service_key] 예외 발생: {e}")
         return False
 
-
-# -------------------------------------------------------------------
-# 서비스 CSR 생성
-# -------------------------------------------------------------------
 def create_service_csr(service: str, key_path: Path, csr_path: Path) -> bool:
     """
     서비스 CSR 생성
@@ -286,10 +244,6 @@ def create_service_csr(service: str, key_path: Path, csr_path: Path) -> bool:
         log_error(f"[create_service_csr] 예외 발생: {e}")
         return False
 
-
-# -------------------------------------------------------------------
-# 서비스 cert CA 서명
-# -------------------------------------------------------------------
 def sign_service_cert_with_ca(
     service: str,
     csr_path: Path,
@@ -357,10 +311,6 @@ def sign_service_cert_with_ca(
         log_error(f"[sign_service_cert_with_ca] 예외 발생: {e}")
         return False
 
-
-# -------------------------------------------------------------------
-# 서비스 인증서 검증
-# -------------------------------------------------------------------
 def verify_service_cert(service: str, cert_path: Path) -> bool:
     """
     서비스 인증서를 Root CA로 검증
@@ -387,10 +337,6 @@ def verify_service_cert(service: str, cert_path: Path) -> bool:
         log_error(f"[verify_service_cert] 예외 발생: {e}")
         return False
 
-
-# -------------------------------------------------------------------
-# 서비스 디렉터리에 Root CA 복사
-# -------------------------------------------------------------------
 def deploy_root_ca_to_service(service: str, ca_src: Path) -> bool:
     """
     서비스 디렉터리 내부 certs/에 Root CA 복사
@@ -421,10 +367,6 @@ def deploy_root_ca_to_service(service: str, ca_src: Path) -> bool:
         log_error(f"[deploy_root_ca_to_service] 예외 발생: {e}")
         return False
 
-
-# -------------------------------------------------------------
-# Bitwarden 전용 권한 설정 (파일 모드만 조정)
-# -------------------------------------------------------------
 def fix_bitwarden_cert_permissions() -> None:
     """
     Bitwarden SSL 디렉터리 권한 정리
@@ -466,10 +408,6 @@ def fix_bitwarden_cert_permissions() -> None:
     except subprocess.CalledProcessError as e:
         log_error(f"[fix_bitwarden_cert_permissions] 실패: {e}")
 
-
-# -------------------------------------------------------------------
-# 서비스 full chain 인증서 생성 (상위 Orchestration 함수)
-# -------------------------------------------------------------------
 def create_service_certificate(
     service: str,
     overwrite: bool = False,
@@ -506,10 +444,9 @@ def create_service_certificate(
         if key_path.exists() or cert_path.exists():
             if not overwrite:
                 log_info(
-                    f"[create_service_certificate] {service} 인증서 이미 존재, overwrite=False → skip"
+                    f"[create_service_certificate] {service} 인증서 이미 존재"
                 )
-                # Root CA만 서비스 쪽으로 복사 (없을 수도 있으므로)
-                deploy_root_ca_to_service(service, ca_path)
+
                 return True
 
         san_value = san or build_default_san(service)
@@ -541,10 +478,6 @@ def create_service_certificate(
         log_error(f"[create_service_certificate] 예외 발생: {e}")
         return False
 
-
-# -------------------------------------------------------------------
-# 서비스/마운트 폴더 권한 일괄 설정
-# -------------------------------------------------------------------
 def apply_service_permissions(service: str) -> bool:
     """
     config/<service>.yml 의 permissions 섹션을 읽어
@@ -664,10 +597,6 @@ def apply_service_permissions(service: str) -> bool:
         log_error(f"[apply_service_permissions] 예외 발생: {e}")
         return False
 
-
-# -------------------------------------------------------------------
-# Windows Root CA 설치 (WSL2 연동)
-# -------------------------------------------------------------------
 def install_root_ca_windows():
     """
     WSL에서 생성한 Root CA를 Windows 신뢰 저장소에 설치
