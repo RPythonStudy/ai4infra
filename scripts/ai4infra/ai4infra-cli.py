@@ -1,15 +1,3 @@
-#!/usr/bin/env python3
-"""
-파일명: scripts/ai4infra/ai4infra-cli.py
-주요구현: 
-  - install: `서비스명` 또는 `all`를 인자로 하며 아래의 옵션이 있음
-    - default: 컨테이너중단/데이터백업 후 멱등성 설치 
-    -   reset: 컨테이너중단/데이터삭제 후 설치 (개발용)
-변경이력:
-  - 2025-11-22: backup 및 멱등성 설치 추가 (BenKorea)
-  - 2025-11-16: 최초 구현 (BenKorea)
-"""
-
 # Standard library imports
 import os
 import re

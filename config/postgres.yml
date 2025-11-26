@@ -1,6 +1,6 @@
 ####################################
 # 파일명: config/postgres.yml
-# 목적: PostgreSQL 데이터베이스 설정
+# 목적: PostgreSQL 컨테이너 설정
 # 기능: 
 #  - 민감정보 및 BASE_DIR은 프로젝트 .env, config/<service>.yml에서는 아래의 아래의 변수들을 파싱하여 {$BASE_DIR}/service/.env 생성할 때의 설정값으로 사용
 #  - copy_template() 이후 컨테이너 내부의 소유권과 마운트되는 디렉토리의 소유권을 일치시키기 위한 설정
@@ -27,5 +27,8 @@ permissions:
 tls:
   enable: true
 
-POSTGRES_DB: ai4infra
-PORT: 5432
+env_vars:
+  POSTGRES_DB: ai4infra
+
+compose_vars:
+  PORT: 5432
