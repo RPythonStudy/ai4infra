@@ -9,6 +9,16 @@
 #  - 2025-10-08: 최초 구현 (BenKorea)
 #####################################
 
+service:
+  enable: true
+
+path:
+  data: ${BASE_DIR}/ladp/data
+  config: ${BASE_DIR}/ldap/config/postgresql.conf
+  private_key: ${BASE_DIR}/ldap/certs/private.key
+  service_crt: ${BASE_DIR}/ldap/certs/certificate.crt
+  root_ca: ${BASE_DIR}/ldap/certs/rootCA.crt  
+
 permissions:
   uid: 100
   gid: 101
@@ -16,7 +26,6 @@ permissions:
   key_mode: "600"
   cert_mode: "644"
 
-LDAP_DATA_DIR: "${BASE_DIR}/ldap/data"
-LDAP_CONFIG_DIR: ${BASE_DIR}/ldap/config                       # 설정 파일 경로
-LDAP_PORT: 389                                                 # LDAP 포트
-LDAP_SSL_PORT: 636                                            # LDAP SSL 포트
+env_vars:                  
+  LDAP_PORT: 389
+  LDAP_SSL_PORT: 636

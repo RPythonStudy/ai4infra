@@ -8,8 +8,29 @@
 #  - 2025-10-06: docker-compose.yml용 변수 설정 (BenKorea)
 #####################################
 
-VAULT_FILE_DIR: ${BASE_DIR}/vault/file   
-VAULT_CERTS_DIR: ${BASE_DIR}/vault/certs                      # 인증서 디렉토리
-VAULT_CONFIG_DIR: ${BASE_DIR}/vault/config                      # 설정 파일 경로
-VAULT_PORT: 8200                                                # Vault 포트
+service:
+  enable: true
+
+path:
+  data: ${BASE_DIR}/vault/file
+  config: ${BASE_DIR}/vault/config
+  private_key: ${BASE_DIR}/vault/certs/private.key
+  service_crt: ${BASE_DIR}/vault/certs/certificate.crt
+  root_ca: ${BASE_DIR}/vault/certs/rootCA.crt
+
+# permissions:
+#   uid: 70
+#   gid: 70
+#   data_dir_mode: "700"
+#   key_mode: "600"
+#   cert_mode: "644"
+
+# tls:
+#   enable: true
+
+# env_vars:
+#   POSTGRES_DB: ai4infra
+
+compose_vars:
+  PORT: 8200
  

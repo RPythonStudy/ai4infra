@@ -9,6 +9,9 @@
 #   - 2025-11-22: 최초 작성 (BenKorea)
 ###############################################
 
+service:
+  enable: true
+
 permissions:
   uid: 1001
   gid: 1001
