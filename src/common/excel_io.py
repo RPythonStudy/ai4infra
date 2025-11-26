@@ -6,7 +6,7 @@
 - Path 객체 및 pandas 라이브러리 사용
 - {파일명: 데이터프레임} 형태의 딕셔너리 반환
 변경이력:
-  - 2025-09-24: 최초 구현 (BenKorea)
+  - 2025-10-02: 최초 구현 (BenKorea)
 """
 
 import inspect
@@ -30,7 +30,7 @@ def read_excels(input_dir: str) -> Dict[str, pd.DataFrame]:
 
 
 def save_excels(output_dir: str, dataframes_dict: Dict[str, pd.DataFrame], 
-                    prefix: Optional[str] = None, suffix: Optional[str] = None) -> None:
+                    prefix: Optional[str] = None) -> None:
     """
     데이터프레임 딕셔너리를 지정된 디렉토리에 엑셀 파일로 저장하는 일반화된 함수.
     
@@ -38,7 +38,6 @@ def save_excels(output_dir: str, dataframes_dict: Dict[str, pd.DataFrame],
         output_dir (str): 저장할 디렉토리 경로
         dataframes_dict (Dict[str, pd.DataFrame]): {파일명: 데이터프레임} 딕셔너리
         prefix (Optional[str]): 파일명 앞에 붙일 접두사 (예: "deid_", "structured_")
-        suffix (Optional[str]): 파일명 뒤에 붙일 접미사 (예: "_processed", "_final")
         
     Returns:
         None
@@ -92,9 +91,6 @@ def save_excels(output_dir: str, dataframes_dict: Dict[str, pd.DataFrame],
             name_without_ext = base_filename.replace('.xlsx', '')
             name_parts.append(name_without_ext)
             
-            if suffix:
-                name_parts.append(suffix.lstrip('_'))
-            
             # 최종 파일명 생성
             final_filename = '_'.join(name_parts) + '.xlsx'
             output_path = os.path.join(output_dir, final_filename)
@@ -112,28 +108,3 @@ def save_excels(output_dir: str, dataframes_dict: Dict[str, pd.DataFrame],
     log_info(f"[save_excel_files] 저장 완료: {saved_count}개, 실패: {failed_count}개")
 
 
-# 기존 함수와의 호환성을 위한 별칭 함수들
-def save_deidentified_excels(output_dir: str, deid_dfs: Dict[str, pd.DataFrame]) -> None:
-    """
-    비식별화된 데이터 저장 (기존 호환성 유지)
-    
-    Args:
-        output_dir (str): 저장할 디렉토리 경로
-        deid_dfs (Dict[str, pd.DataFrame]): 비식별화된 데이터프레임 딕셔너리
-    """
-    save_excel_files(output_dir, deid_dfs, prefix="deid")
-
-
-def save_structured_excels(output_dir: str, structured_dfs: Dict[str, pd.DataFrame]) -> None:
-    """
-    구조화된 데이터 저장
-    
-    Args:
-        output_dir (str): 저장할 디렉토리 경로
-        structured_dfs (Dict[str, pd.DataFrame]): 구조화된 데이터프레임 딕셔너리
-    """
-    save_excel_files(output_dir, structured_dfs, prefix="structured")
-
-
-# 기존 함수명 별칭 (하위 호환성)
-load_excel_files = read_excels
