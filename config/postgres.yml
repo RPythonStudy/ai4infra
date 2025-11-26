@@ -10,6 +10,9 @@
 #  - 2025-11-04: 중복 root key 제거함 (BenKorea)   
 #####################################
 
+service:
+  enable: true
+
 path:
   data: ${BASE_DIR}/postgres/data
   config: ${BASE_DIR}/postgres/config/postgresql.conf
