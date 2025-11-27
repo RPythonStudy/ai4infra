@@ -31,7 +31,7 @@ from utils.container.backup_manager import backup_data
 from utils.container.backup_manager import restore_data
 
 # bitwarden installer
-from utils.container.bitwarden_installer import install_bitwarden
+from utils.container.bitwarden_installer import handle_bitwarden_manual_install
 from utils.container.bitwarden_installer import bitwarden_start
 from utils.container.bitwarden_installer import apply_override
 
@@ -111,13 +111,14 @@ def install(
         # 3) 템플릿 복사
         copy_template(svc)
 
-        # 4) Bitwarden 설치 단계 (파일 구조 준비)
+        # 4) Bitwarden 설치는 수동 단계이므로 안내 + 검증을 수행합니다.
         if svc == "bitwarden":
-            ok = install_bitwarden()
+            ok = handle_bitwarden_manual_install()
             if not ok:
-                log_error("[install] Bitwarden 설치 실패 → skip")
+                log_error("[install] Bitwarden manual install 실패 → skip")
                 continue
             apply_override("bitwarden")
+
 
         # 5) 서비스별 인증서 생성 (Bitwarden 설치 완료 후)
         create_service_certificate(service=svc, san=None)
@@ -185,27 +186,28 @@ def install(
 
         log_info(f"[install] {svc} 설치 및 점검 완료")
 
-
-  
 @app.command()
 def backup(service: str = typer.Argument(..., help="백업할 서비스 (postgres, all)")):
     """서비스 데이터 백업 (컨테이너 중지 → 백업 → 재시작)"""
-    services = list(SERVICES) if service == "all" else [service]
-    
+
+    # install()과 동일한 서비스 자동 탐색 방식
+    services = list(discover_services()) if service == "all" else [service]
+
     backup_files = []
+
     for svc in services:
-        if svc in SERVICES:
-            # 1) 컨테이너 중지
-            stop_container(f"ai4infra-{svc}")
-            
-            # 2) 백업 수행
-            backup_file = backup_data(svc)
-            if backup_file:
-                backup_files.append(backup_file)
-            
-            # 3) 컨테이너 재시작
-            start_container(svc)
-    
+
+        # 1) 컨테이너 중지
+        stop_container(f"ai4infra-{svc}")
+
+        # 2) 백업
+        backup_file = backup_data(svc)
+        if backup_file:
+            backup_files.append(backup_file)
+
+        # 3) 컨테이너 재시작
+        start_container(svc)
+
     if backup_files:
         log_info(f"[backup] {len(backup_files)}개 백업 완료")
     else:

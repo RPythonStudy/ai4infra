@@ -102,7 +102,6 @@ def copy_template(service: str) -> bool:
         log_error(f"[copy_template] 예외 발생: {e}")
         return False
 
-
 def ensure_network():
     """ai4infra 네트워크 생성 - 극단적 간결 버전"""
     cmd = ['sudo', 'docker', 'network', 'ls', '--filter', 'name=ai4infra', '--format', '{{.Name}}']
@@ -113,7 +112,6 @@ def ensure_network():
         log_info("[ensure_network] ai4infra 네트워크 생성됨")
     else:
         log_debug("[ensure_network] ai4infra 네트워크 이미 존재")
-
 
 def start_container(service: str):
     """단일 서비스 컨테이너 시작 - 디버깅 강화 버전"""

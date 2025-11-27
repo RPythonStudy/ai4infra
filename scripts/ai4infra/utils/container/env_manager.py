@@ -72,6 +72,10 @@ def generate_env(service: str) -> str:
         if k not in exclude_keys and not isinstance(v, dict)
     }
 
+    # 3) env_vars 섹션이 있으면 그 내용을 추가
+    if "env_vars" in config_vars and isinstance(config_vars["env_vars"], dict):
+        config_env_vars.update(config_vars["env_vars"])
+
     # 병합: .env > config_ENV > path→DATA_DIR 변환 변수
     merged = {**env_vars, **config_env_vars}
 
@@ -85,7 +89,7 @@ def generate_env(service: str) -> str:
         merged["CERTS_DIR"] = str(Path(paths["private_key"]).parent)
 
     if "config" in paths:
-        merged["CONF_DIR"] = str(Path(paths["config"]).parent)
+        merged["CONF_DIR"] = paths["config"]
 
     # 4) 저장할 디렉터리
     service_dir = Path(f"{BASE_DIR}/{service}")

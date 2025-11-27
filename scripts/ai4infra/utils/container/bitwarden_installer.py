@@ -13,7 +13,7 @@ PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
 
 
-def install_bitwarden() -> bool:
+def handle_bitwarden_manual_install() -> bool:
     bitwarden_dir = f"{BASE_DIR}/bitwarden"
     bitwarden_script = f"{bitwarden_dir}/bitwarden.sh"
     compose_file = f"{bitwarden_dir}/bwdata/docker/docker-compose.yml"

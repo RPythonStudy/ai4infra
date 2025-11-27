@@ -3,27 +3,32 @@ services:
     image: hashicorp/vault:1.20.4
     container_name: ai4infra-vault
     restart: unless-stopped
+
     cap_add:
       - IPC_LOCK
     mem_limit: 640m
+
     ports:
-      - "${VAULT_PORT:-8200}:8200"
-    environment:
-      - VAULT_API_ADDR=https://vault:8200
-      - VAULT_ADDR=https://localhost:8200
-    command: >
-      sh -c "
-        cp /vault/certs/certificate.crt /etc/ssl/certs/certificate.crt 2>/dev/null || true;
-        cat /vault/certs/certificate.crt >> /etc/ssl/certs/ca-certificates.crt 2>/dev/null || true;
-        vault server -config=/vault/config/vault.hcl
-      "
-    volumes:
-      - ${VAULT_FILE_DIR:-/opt/ai4infra/vault/file}:/vault/file
-      - ${VAULT_CERTS_DIR:-/opt/ai4infra/vault/certs}:/vault/certs
-      - ${VAULT_CONFIG_DIR:-/opt/ai4infra/vault/config}:/vault/config
+      - "${PORT:-8200}:8200"
     networks:
       - ai4infra
 
+    environment:
+      VAULT_ADDR: ${VAULT_ADDR}
+      VAULT_API_ADDR: ${VAULT_API_ADDR}
+
+    volumes:
+      - ${DATA_DIR:-/opt/ai4infra/vault/file}:/vault/file
+      - ${CERTS_DIR:-/opt/ai4infra/vault/certs}:/vault/certs
+      - ${CONF_DIR:-/opt/ai4infra/vault/config}:/vault/config
+
+    command: >
+      sh -c "
+        cp /vault/certs/certificate.crt /etc/ssl/certs/certificate.crt 2>/dev/null || true;
+        cat /vault/certs/rootCA.crt >> /etc/ssl/certs/ca-certificates.crt 2>/dev/null || true;
+        vault server -config=/vault/config/vault.hcl
+      "
+      
 networks:
   ai4infra:
     external: true
