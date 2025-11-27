@@ -428,7 +428,6 @@ def resolve_cert_paths(service: str) -> dict:
         "root_ca": root_ca,
     }
 
-
 def create_service_certificate(service: str, san: str | None = None) -> bool:
     """
     서비스 인증서 생성:
@@ -591,7 +590,6 @@ def apply_service_permissions(service: str) -> bool:
     except Exception as e:
         log_error(f"[apply_service_permissions] 예외 발생: {e}")
         return False
-
 
 def install_root_ca_windows():
     """

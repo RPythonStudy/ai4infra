@@ -14,17 +14,12 @@ service:
 
 path:
   data: ${BASE_DIR}/bitwarden/bwdata  
+  private_key: ${BASE_DIR}/bitwarden/bwdata/ssl/${BITWARDEN_DOMAIN}/private.key
+  service_crt: ${BASE_DIR}/bitwarden/bwdata/ssl/${BITWARDEN_DOMAIN}/certificate.crt
 
 permissions:
   uid: 1001
   gid: 1001
-
-  # bwdata/** 아래 권한
   data_dir_mode: "700"
-
-  # SSL 폴더의 key/cert default permission
   key_mode: "600"
   cert_mode: "644"
-
-bitwarden:
-  domain: "bitwarden.ai4infra.internal"

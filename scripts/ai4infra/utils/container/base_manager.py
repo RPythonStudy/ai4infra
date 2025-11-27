@@ -39,7 +39,6 @@ def stop_container(search_pattern: str) -> bool:
 
     return True
 
-
 def copy_template(service: str) -> bool:
     template_dir = f"{PROJECT_ROOT}/template/{service}"
     service_dir = f"{BASE_DIR}/{service}"
