@@ -15,29 +15,47 @@ from dotenv import load_dotenv
 
 # Local imports
 from common.logger import log_debug, log_error, log_info
-from utils.container_manager import (
-    create_user,
-    add_docker_group,
-    stop_container,
-    copy_template,
-    generate_env,
-    install_bitwarden,
-    start_container,
-    backup_data,
-    restore_data,
-    setup_usb_secrets,
-    apply_override,
-    check_container,
-    check_vault,
-    check_postgres,
-    discover_services
-)
-from utils.certs_manager import (
-    generate_root_ca_if_needed,
-    create_service_certificate,
-    apply_service_permissions,
-    install_root_ca_windows,
-)
+
+# user manager
+from utils.container.user_manager import create_user
+from utils.container.user_manager import add_docker_group
+
+# base manager
+from utils.container.base_manager import stop_container
+from utils.container.base_manager import copy_template
+from utils.container.base_manager import start_container
+from utils.container.base_manager import ensure_network
+
+# backup & restore
+from utils.container.backup_manager import backup_data
+from utils.container.backup_manager import restore_data
+
+# bitwarden installer
+from utils.container.bitwarden_installer import install_bitwarden
+from utils.container.bitwarden_installer import bitwarden_start
+from utils.container.bitwarden_installer import apply_override
+
+# USB secrets
+from utils.container.usb_secrets import setup_usb_secrets
+
+# healthcheck modules
+from utils.container.healthcheck import check_container
+from utils.container.health_vault import check_vault
+from utils.container.health_postgres import check_postgres
+
+# service discovery
+from utils.container.installer import discover_services
+
+#
+from utils.container.env_manager import generate_env
+# -------------------------------------------------------------
+# 인증서 모듈 (기존 유지, 한 줄씩)
+# -------------------------------------------------------------
+from utils.certs_manager import generate_root_ca_if_needed
+from utils.certs_manager import create_service_certificate
+from utils.certs_manager import apply_service_permissions
+from utils.certs_manager import install_root_ca_windows
+
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
