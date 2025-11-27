@@ -15,6 +15,7 @@ path:
   data: ${BASE_DIR}/vault/file
   config: ${BASE_DIR}/vault/config
   private_key: ${BASE_DIR}/vault/certs/private.key
+  csr: ${BASE_DIR}/vault/certs/request.csr
   service_crt: ${BASE_DIR}/vault/certs/certificate.crt
   root_ca: ${BASE_DIR}/vault/certs/rootCA.crt
 

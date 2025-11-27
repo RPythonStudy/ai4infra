@@ -10,6 +10,9 @@ install-bitwarden:
 install-bitwarden--reset:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install bitwarden --reset
 
+install-bitwarden--backup:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install bitwarden --backup	
+
 backup-bitwarden:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py backup bitwarden
 
@@ -21,6 +24,10 @@ install-postgres:
 
 install-postgres--reset:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres --reset
+
+install-postgres--backup:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres --backup
+
 
 install-vault:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install vault

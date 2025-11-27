@@ -39,6 +39,7 @@ import yaml
 # Third-party imports
 from dotenv import load_dotenv
 from common.logger import log_info, log_warn, log_error
+from common.load_config import load_config
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
@@ -50,22 +51,7 @@ CA_CERT = CA_DIR / "rootCA.pem"  # 전역 Root CA 인증서 (PEM)
 
 
 def create_root_ca(overwrite: bool = False) -> bool:
-    """
-    Root CA 생성
-    - private key 생성 (4096-bit)
-    - self-signed Root CA 인증서 생성 (10년 유효기간)
-    - 기존 파일이 있으면 overwrite=False 에서는 유지
-
-    Parameters
-    ----------
-    overwrite : bool
-        기존 rootCA.key, rootCA.pem을 덮어쓸지 여부
-
-    Returns
-    -------
-    bool
-        생성 성공 여부
-    """
+    
     try:
         if CA_CERT.exists() and CA_KEY.exists() and not overwrite:
             log_info(f"[create_root_ca] Root CA 이미 존재: {CA_CERT}")
@@ -111,16 +97,7 @@ def create_root_ca(overwrite: bool = False) -> bool:
         return False
 
 def verify_root_ca() -> bool:
-    """
-    Root CA 인증서 검증
-    - openssl x509 -text 로 인증서가 정상인지 검사
-    - 인증서 내용의 일부를 미리보기 출력
-
-    Returns
-    -------
-    bool
-        검증 성공 여부
-    """
+  
     if not CA_CERT.exists():
         log_warn("[verify_root_ca] Root CA 인증서가 존재하지 않습니다.")
         return False
@@ -157,18 +134,7 @@ def generate_root_ca_if_needed() -> bool:
     return create_root_ca(overwrite=False)
 
 def get_service_cert_paths(service: str) -> tuple[Path, Path, Path]:
-    """
-    서비스별 key, csr, cert 경로를 반환
 
-    Parameters
-    ----------
-    service : str
-        서비스 이름
-
-    Returns
-    -------
-    (key_path, csr_path, cert_path) : tuple[Path, Path, Path]
-    """
     base = Path(BASE_DIR) / service / "certs"
     key_path = base / "private.key"
     csr_path = base / "request.csr"
@@ -408,46 +374,99 @@ def fix_bitwarden_cert_permissions() -> None:
     except subprocess.CalledProcessError as e:
         log_error(f"[fix_bitwarden_cert_permissions] 실패: {e}")
 
-def create_service_certificate(service: str, san: str | None = None) -> bool:
+def resolve_cert_paths(service: str) -> dict:
+    """
+    인증서 경로를 일원화하여 반환합니다.
+
+    원칙:
+      1) config/<service>.yml 의 path.* 가 있으면 절대 신뢰하여 그대로 사용
+      2) 없으면 BASE_DIR/<service>/certs/ 를 fallback 으로 사용
+      3) Bitwarden 은 독립 구조 유지
+    """
+
+    cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
+
     try:
-        cfg_file = Path(PROJECT_ROOT or ".") / "config" / f"{service}.yml"
-        cfg = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) if cfg_file.exists() else {}
-        path_cfg = cfg.get("path", {})
+        yml = load_config(cfg_path, section="path") or {}
+    except Exception:
+        yml = {}
 
-        # 환경변수 치환 함수
-        def sub(v: str) -> str:
-            if not isinstance(v, str):
-                return v
-            v = v.replace("${BASE_DIR}", BASE_DIR or "")
-            v = v.replace("${PROJECT_ROOT}", PROJECT_ROOT or "")
-            return v
+    # ---------------------------------------------------------
+    # Bitwarden 특수 구조
+    # ---------------------------------------------------------
+    if service == "bitwarden":
+        base = Path(BASE_DIR) / "bitwarden" / "bwdata" / "ssl" / BITWARDEN_DOMAIN
 
-        # 경로 결정 (YAML 우선)
-        key_path = Path(sub(path_cfg.get("private_key", f"{BASE_DIR}/{service}/certs/private.key")))
-        csr_path = key_path.parent / "request.csr"
-        cert_path = Path(sub(path_cfg.get("service_crt", f"{BASE_DIR}/{service}/certs/certificate.crt")))
-        root_ca_dst = Path(sub(path_cfg.get("root_ca", f"{BASE_DIR}/{service}/certs/rootCA.crt")))
-        ca_path = CA_CERT
+        key = Path(yml.get("private_key", base / "private.key"))
+        csr = Path(yml.get("csr", key.parent / "request.csr"))
+        crt = Path(yml.get("service_crt", base / "certificate.crt"))
+        root_ca = Path(yml.get("root_ca", base / "ca.crt"))
 
-        # 이미 존재하면 skip + rootCA만 복사
+        return {
+            "key": key,
+            "csr": csr,
+            "crt": crt,
+            "root_ca": root_ca,
+        }
+
+    # ---------------------------------------------------------
+    # 기본 서비스 구조
+    # ---------------------------------------------------------
+
+    # fallback base 경로 (path.* 가 없을 경우 사용)
+    base = Path(BASE_DIR) / service / "certs"
+
+    key = Path(yml.get("private_key", base / "private.key"))
+    csr = Path(yml.get("csr", key.parent / "request.csr"))
+    crt = Path(yml.get("service_crt", base / "certificate.crt"))
+    root_ca = Path(yml.get("root_ca", base / "rootCA.crt"))
+
+    return {
+        "key": key,
+        "csr": csr,
+        "crt": crt,
+        "root_ca": root_ca,
+    }
+
+
+def create_service_certificate(service: str, san: str | None = None) -> bool:
+    """
+    서비스 인증서 생성:
+      1) 경로는 resolve_cert_paths()에서 일원화
+      2) key → csr → crt 순 생성
+      3) rootCA 복사는 deploy_root_ca_to_service()가 전담
+    """
+    try:
+        # 1) 통합 경로 결정
+        paths = resolve_cert_paths(service)
+        key_path = paths["key"]
+        csr_path = paths["csr"]
+        cert_path = paths["crt"]
+
+        # 2) 이미 key + cert 존재하면 skip
         if key_path.exists() and cert_path.exists():
-            subprocess.run(["sudo", "mkdir", "-p", str(root_ca_dst.parent)], check=False)
-            subprocess.run(["sudo", "cp", "-a", str(ca_path), str(root_ca_dst)], check=False)
+            deploy_root_ca_to_service(service, CA_CERT)
             return True
 
+        # 3) SAN 결정
         san_value = san or build_default_san(service)
 
+        # 4) key / csr / crt 생성
         if not create_service_key(service, key_path):
             return False
+
         if not create_service_csr(service, key_path, csr_path):
             return False
+
         if not sign_service_cert_with_ca(service, csr_path, cert_path, san_value):
             return False
+
         if not verify_service_cert(service, cert_path):
             return False
 
-        subprocess.run(["sudo", "mkdir", "-p", str(root_ca_dst.parent)], check=True)
-        subprocess.run(["sudo", "cp", "-a", str(ca_path), str(root_ca_dst)], check=True)
+        # 5) rootCA 복사
+        if not deploy_root_ca_to_service(service, CA_CERT):
+            return False
 
         return True
 
@@ -456,18 +475,20 @@ def create_service_certificate(service: str, san: str | None = None) -> bool:
         return False
 
 def apply_service_permissions(service: str) -> bool:
+    """
+    최종 전략에 맞춘 퍼미션 설정 함수
+    """
     try:
-        config_dir = Path(PROJECT_ROOT or ".") / "config"
-        cfg_path = config_dir / f"{service}.yml"
+        cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
 
-        if not cfg_path.exists():
-            log_warn(f"[apply_service_permissions] 설정 파일 없음: {cfg_path}")
+        # load_config로 설정 일관성 유지
+        try:
+            cfg = load_config(cfg_path) or {}
+        except Exception:
+            log_warn(f"[apply_service_permissions] 설정 로드 실패: {cfg_path}")
             return False
 
-        with cfg_path.open(encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-
-        perms = cfg.get("permissions") or {}
+        perms = cfg.get("permissions", {})
         uid = perms.get("uid")
         gid = perms.get("gid")
         data_mode = str(perms.get("data_dir_mode", "700"))
@@ -475,78 +496,94 @@ def apply_service_permissions(service: str) -> bool:
         cert_mode = str(perms.get("cert_mode", "644"))
 
         service_dir = Path(BASE_DIR) / service
+        path_cfg = cfg.get("path", {})
 
-        # 서비스별 데이터/인증서 디렉터리 규칙
-        if service == "vault":
-            data_dir = service_dir / "file"
-            cert_dir = service_dir / "certs"
-        elif service == "bitwarden":
+        # -----------------------------------------
+        # 1) data_dir 결정 (bitwarden만 예외)
+        # -----------------------------------------
+        data_path = path_cfg.get("data")
+
+        if service == "bitwarden":
             data_dir = service_dir / "bwdata"
-            cert_dir = data_dir / "ssl" / BITWARDEN_DOMAIN
+        elif data_path:
+            data_dir = Path(data_path)
         else:
             data_dir = service_dir / "data"
+
+        # -----------------------------------------
+        # 2) cert_dir 결정 (private_key 기반)
+        # -----------------------------------------
+        private_key_path = path_cfg.get("private_key")
+
+        if service == "bitwarden":
+            cert_dir = service_dir / "bwdata" / "ssl" / BITWARDEN_DOMAIN
+        elif private_key_path:
+            cert_dir = Path(private_key_path).parent
+        else:
             cert_dir = service_dir / "certs"
 
-        # 1) 서비스 루트 소유권
+        # -----------------------------------------
+        # 3) 서비스 루트 소유권
+        # -----------------------------------------
         if service_dir.exists() and uid is not None and gid is not None:
             subprocess.run(
                 ["sudo", "chown", "-R", f"{uid}:{gid}", str(service_dir)],
-                check=False,
+                check=False
             )
-            log_info(f"[apply_service_permissions] 서비스 디렉터리 소유권 변경 → {service_dir} ({uid}:{gid})")
+            log_info(f"[apply_service_permissions] 소유권 변경 → {service_dir} ({uid}:{gid})")
 
-        # 2) 데이터 디렉터리 권한
+        # -----------------------------------------
+        # 4) data_dir 권한
+        # -----------------------------------------
         if data_dir.exists():
             subprocess.run(
                 ["sudo", "chmod", "-R", data_mode, str(data_dir)],
-                check=False,
+                check=False
             )
-            log_info(f"[apply_service_permissions] 데이터 디렉터리 권한 변경 → {data_dir} ({data_mode})")
+            log_info(f"[apply_service_permissions] data 권한({data_mode}) 적용 → {data_dir}")
 
-        # 3) 인증서 디렉터리 권한
+        # -----------------------------------------
+        # 5) cert_dir 권한 (key_mode / cert_mode 구분)
+        # -----------------------------------------
         if cert_dir.exists():
-            key_paths: set[Path] = set()
+            key_paths = set()
             key_count = 0
 
-            # private key 후보들
             for pattern in ("*.key", "*key.pem", "*_key.pem"):
                 for path in cert_dir.glob(pattern):
                     key_paths.add(path)
-                    subprocess.run(
-                        ["sudo", "chmod", key_mode, str(path)],
-                        check=False,
-                    )
+                    subprocess.run(["sudo", "chmod", key_mode, str(path)], check=False)
                     key_count += 1
-            
-            if key_count > 0:
-                log_info(f"[apply_service_permissions] Private key 권한 변경 → {key_count}개 파일 ({key_mode})")
 
-            # 나머지 crt/pem 은 cert_mode
+            if key_count > 0:
+                log_info(
+                    f"[apply_service_permissions] Private key {key_count}개 ({key_mode}) 적용"
+                )
+
             cert_count = 0
             for path in cert_dir.glob("*.crt"):
                 if path not in key_paths:
-                    subprocess.run(
-                        ["sudo", "chmod", cert_mode, str(path)],
-                        check=False,
-                    )
+                    subprocess.run(["sudo", "chmod", cert_mode, str(path)], check=False)
                     cert_count += 1
+
             for path in cert_dir.glob("*.pem"):
                 if path not in key_paths:
-                    subprocess.run(
-                        ["sudo", "chmod", cert_mode, str(path)],
-                        check=False,
-                    )
+                    subprocess.run(["sudo", "chmod", cert_mode, str(path)], check=False)
                     cert_count += 1
-            
-            if cert_count > 0:
-                log_info(f"[apply_service_permissions] Certificate 권한 변경 → {cert_count}개 파일 ({cert_mode})")
 
-        # Bitwarden 특수 구조 추가 보정 (파일명 기준)
+            if cert_count > 0:
+                log_info(
+                    f"[apply_service_permissions] Certificate {cert_count}개 ({cert_mode}) 적용"
+                )
+
+        # -----------------------------------------
+        # 6) Bitwarden 보정
+        # -----------------------------------------
         if service == "bitwarden":
             try:
                 fix_bitwarden_cert_permissions()
             except Exception as e:
-                log_warn(f"[apply_service_permissions] Bitwarden 추가 보정 실패: {e}")
+                log_warn(f"[apply_service_permissions] Bitwarden 보정 실패: {e}")
 
         log_info(f"[apply_service_permissions] {service} 권한 정리 완료")
         return True
@@ -554,6 +591,7 @@ def apply_service_permissions(service: str) -> bool:
     except Exception as e:
         log_error(f"[apply_service_permissions] 예외 발생: {e}")
         return False
+
 
 def install_root_ca_windows():
     """

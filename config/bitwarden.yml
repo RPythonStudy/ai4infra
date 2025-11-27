@@ -12,6 +12,9 @@
 service:
   enable: true
 
+path:
+  data: ${BASE_DIR}/bitwarden/bwdata  
+
 permissions:
   uid: 1001
   gid: 1001

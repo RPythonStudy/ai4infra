@@ -30,6 +30,7 @@ from utils.container_manager import (
     check_container,
     check_vault,
     check_postgres,
+    discover_services
 )
 from utils.certs_manager import (
     generate_root_ca_if_needed,
@@ -42,7 +43,7 @@ load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
 app = typer.Typer(help="AI4INFRA 서비스 관리")
-SERVICES = ('vault', 'bitwarden', 'postgres', 'elk', 'ldap') # 튜플로 선언하어 변경 방지
+
 
 @app.command()
 def generate_rootca():
@@ -60,7 +61,7 @@ def install(
     backup: bool = typer.Option(False, "--backup", help="데이터 백업 → 서비스 폴더 삭제 → 설치 → 데이터 복원")
 ):
     
-    services = list(SERVICES) if service == "all" else [service]
+    services = list(discover_services()) if service == "all" else [service]
     for svc in services:
         service_dir = f"{BASE_DIR}/{svc}"
         backup_path = None

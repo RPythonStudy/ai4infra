@@ -17,7 +17,35 @@ from common.logger import log_debug, log_error, log_info, log_warn
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
-SERVICES = ['postgres', 'vault', 'elk', 'ldap', 'bitwarden']
+
+
+def discover_services(config_dir="config") -> list:
+    """
+    config/*.yml 파일을 스캔하여 service.enable==true 인 서비스만 반환한다.
+    SERVICES 하드코딩을 완전히 제거한다.
+    """
+    services = []
+    config_path = Path(config_dir)
+
+    for yml_file in config_path.glob("*.yml"):
+        name = yml_file.stem  # ex: postgres.yml → postgres
+
+        try:
+            cfg = yaml.safe_load(yml_file.read_text(encoding="utf-8")) or {}
+        except Exception as e:
+            log_error(f"[discover_services] YAML 파싱 실패: {yml_file} ({e})")
+            continue
+
+        service_cfg = cfg.get("service", {})
+        enabled = service_cfg.get("enable", False)
+
+        if enabled:
+            services.append(name)
+            log_debug(f"[discover_services] enable=true → {name}")
+        else:
+            log_debug(f"[discover_services] enable=false → {name}")
+
+    return services
 
 def create_user(username: str, password: str = "bit") -> bool:
 
@@ -92,81 +120,61 @@ def stop_container(search_pattern: str) -> bool:
 
     return True
 
-def get_service_data_dir(service: str) -> str:
-    """
-    config/<service>.yml에서 데이터 디렉터리 경로를 추출합니다.
-    
-    추출 규칙:
-      - postgres: PG_DATA_DIR
-      - vault: VAULT_FILE_DIR
-      - ldap: LDAP_DATA_DIR
-      - bitwarden: {BASE_DIR}/bitwarden/bwdata (설정 파일 없음)
-      - 기타: {BASE_DIR}/{service}/data (기본값)
-    
-    Returns
-    -------
-    str
-        데이터 디렉터리 절대 경로
-    """
-    
-    # Bitwarden은 설정 파일이 없으므로 하드코딩
-    if service == "bitwarden":
-        return f"{BASE_DIR}/{service}/bwdata"
-    
-    # config/<service>.yml에서 추출
-    config_vars = extract_config_vars(service)
-    
-    # 서비스별 데이터 디렉터리 키 매핑
-    data_dir_keys = {
-        'postgres': 'PG_DATA_DIR',
-        'vault': 'VAULT_FILE_DIR',
-        'ldap': 'LDAP_DATA_DIR',
-        'elk': 'ELK_DATA_DIR',
-    }
-    
-    key = data_dir_keys.get(service)
-    if key and key in config_vars:
-        return config_vars[key]
-    
-    # 기본값: {BASE_DIR}/{service}/data
-    log_debug(f"[get_service_data_dir] {service}: 설정 없음, 기본 경로 사용")
-    return f"{BASE_DIR}/{service}/data"
-
 def backup_data(service: str, data_folder: str = None) -> str:
     """
     서비스의 data 디렉터리만 백업합니다.
     
-    데이터 경로는 config/<service>.yml에서 자동 추출:
-      - postgres: PG_DATA_DIR
-      - vault: VAULT_FILE_DIR
-      - ldap: LDAP_DATA_DIR
-      - bitwarden: {BASE_DIR}/bitwarden/bwdata
-      - 기타: {BASE_DIR}/{service}/data
-    
-    백업 결과는 BASE_DIR/backups/{service}/{service}_{timestamp} 에 저장됩니다.
+    경로 규칙:
+      1) config/<service>.yml 의 path.data 가 있으면 그 값을 100% 사용
+      2) 없으면 fallback: BASE_DIR/<service>/data
+      3) bitwarden 역시 bitwarden.yml 에 path.data 를 넣어 통일할 수 있음
 
-    Returns
-    -------
-    str
-        백업이 저장된 디렉터리 경로. 실패 시 빈 문자열.
+    백업 경로:
+      BASE_DIR/backups/{service}/{service}_{timestamp}
     """
-    
-    # config/<service>.yml에서 데이터 디렉터리 추출
-    src_dir = get_service_data_dir(service)
-    
-    backup_dir = f"{BASE_DIR}/backups/{service}"
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dst_dir = f"{backup_dir}/{service}_{timestamp}"
 
+    # ------------------------------------------------------
+    # 1) config에서 path.data 로드
+    # ------------------------------------------------------
+    cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
+
+    try:
+        cfg = load_config(cfg_path) or {}
+    except Exception:
+        log_error(f"[backup_data] 설정 로드 실패: {cfg_path}")
+        return ""
+
+    path_cfg = cfg.get("path", {})
+    data_path = path_cfg.get("data")
+
+    # ------------------------------------------------------
+    # 2) data_dir 결정 (config 우선)
+    # ------------------------------------------------------
+    if data_path:
+        src_dir = data_path
+    else:
+        # fallback — 거의 사용되지 않도록 path.data를 설정하는 것이 권장됨
+        src_dir = f"{BASE_DIR}/{service}/data"
+
+    # ------------------------------------------------------
+    # 3) data_dir 존재 여부 확인
+    # ------------------------------------------------------
     if not os.path.exists(src_dir):
         log_info(f"[backup_data] {service}: 백업할 data 디렉터리 없음 ({src_dir})")
         return ""
+
+    # ------------------------------------------------------
+    # 4) 백업 경로 구성
+    # ------------------------------------------------------
+    backup_dir = f"{BASE_DIR}/backups/{service}"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dst_dir = f"{backup_dir}/{service}_{timestamp}"
 
     try:
         # 백업 디렉터리 생성
         subprocess.run(['sudo', 'mkdir', '-p', backup_dir], check=True)
 
-        # 권한/소유권을 그대로 보존하여 data 디렉터리만 백업
+        # rsync로 권한/소유자 그대로 백업
         cmd = [
             'sudo', 'rsync', '-a', '--numeric-ids',
             f"{src_dir}/", f"{dst_dir}/"
@@ -182,53 +190,69 @@ def backup_data(service: str, data_folder: str = None) -> str:
 
 def restore_data(service: str, backup_path: str) -> bool:
     """
-    백업된 데이터를 서비스 디렉터리로 복원합니다.
-    
-    복원 경로는 config/<service>.yml에서 자동 추출:
-      - postgres: PG_DATA_DIR
-      - vault: VAULT_FILE_DIR
-      - ldap: LDAP_DATA_DIR
-      - bitwarden: {BASE_DIR}/bitwarden/bwdata
-      - 기타: {BASE_DIR}/{service}/data
-    
-    Parameters
-    ----------
-    service : str
-        복원할 서비스 이름
-    backup_path : str
-        백업 디렉터리 경로
-    
-    Returns
-    -------
-    bool
-        복원 성공 시 True, 실패 시 False
+    백업된 데이터를 서비스의 data 디렉터리에 복원합니다.
+
+    경로 규칙:
+      1) config/<service>.yml 의 path.data 가 있으면 그대로 사용
+      2) 없으면 fallback: BASE_DIR/<service>/data
+      3) bitwarden.yml 에 path.data 를 추가하면 bitwarden도 일반 서비스처럼 처리 가능
+
+    복원 방식:
+      - rsync -a --numeric-ids 로 권한 및 소유자까지 그대로 복원
     """
-    
-    # 백업 경로 존재 확인
+
+    # -----------------------------------------
+    # 1) 백업 경로 존재 확인
+    # -----------------------------------------
     if not os.path.exists(backup_path):
         log_error(f"[restore_data] 백업 경로 없음: {backup_path}")
         return False
-    
-    # config/<service>.yml에서 복원 대상 디렉터리 추출
-    restore_target = get_service_data_dir(service)
-    
+
+    # -----------------------------------------
+    # 2) config/<service>.yml 에서 path.data 로드
+    # -----------------------------------------
+    cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
+
     try:
-        # 복원 대상 디렉터리 생성
+        cfg = load_config(cfg_path) or {}
+    except Exception:
+        log_error(f"[restore_data] 설정 로드 실패: {cfg_path}")
+        return False
+
+    path_cfg = cfg.get("path", {})
+    data_path = path_cfg.get("data")
+
+    # -----------------------------------------
+    # 3) data_dir 결정 (bitwarden 예외는 config에서 해결 가능)
+    # -----------------------------------------
+    if data_path:
+        restore_target = data_path
+    else:
+        # fallback — path.data를 설정하도록 유도하므로 실제 사용은 드묾
+        restore_target = f"{BASE_DIR}/{service}/data"
+
+    # -----------------------------------------
+    # 4) 복원 대상 디렉터리 생성
+    # -----------------------------------------
+    try:
         subprocess.run(['sudo', 'mkdir', '-p', restore_target], check=True)
-        
-        # rsync로 복원 (권한/소유권 완전 보존)
+
+        # -----------------------------------------
+        # 5) rsync로 복원 (권한/소유자 완전 보존)
+        # -----------------------------------------
         cmd = [
             'sudo', 'rsync', '-a', '--numeric-ids',
             f"{backup_path}/", f"{restore_target}/"
         ]
         subprocess.run(cmd, check=True)
-        
+
         log_info(f"[restore_data] {service}: 데이터 복원 완료 → {backup_path} → {restore_target}")
         return True
-        
+
     except subprocess.CalledProcessError as e:
         log_error(f"[restore_data] {service}: 복원 실패 - {e}")
         return False
+
 
 def copy_template(service: str) -> bool:
     template_dir = f"{PROJECT_ROOT}/template/{service}"

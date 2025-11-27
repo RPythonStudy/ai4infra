@@ -16,6 +16,7 @@ path:
   data: ${BASE_DIR}/ladp/data
   config: ${BASE_DIR}/ldap/config/postgresql.conf
   private_key: ${BASE_DIR}/ldap/certs/private.key
+  csr: ${BASE_DIR}/ldap/certs/request.csr
   service_crt: ${BASE_DIR}/ldap/certs/certificate.crt
   root_ca: ${BASE_DIR}/ldap/certs/rootCA.crt  
 
