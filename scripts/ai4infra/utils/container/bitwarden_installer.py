@@ -20,29 +20,52 @@ def handle_bitwarden_manual_install() -> bool:
 
     # 1) 이미 설치되어 있는지 검사 (bitwarden.sh + compose 파일)
     if Path(bitwarden_script).exists() and Path(compose_file).exists():
-        log_info("[install_bitwarden] Bitwarden이 이미 설치되어 있습니다.")
+        log_info("[install_bitwarden] Bitwarden이 이미 설치되어 다음단계를 진행합니다.")
         return True
 
-    # 2) 사용자에게 설치 안내 (설치스크립트 존재 여부는 체크하지 않음)
+    # 2) 서비스폴더/설치파일 실행권한 및 소유권 변경
+    result = subprocess.run(["sudo", "chmod", "-R", "700", bitwarden_dir], check=True)
+    if result.returncode == 0:
+        log_info(f"[install_bitwarden] {bitwarden_dir} 실행권한 변경함") 
+    result = subprocess.run(["sudo", "chown", "-R", "bitwarden:bitwarden", bitwarden_dir], check=True)
+    if result.returncode == 0:
+        log_info(f"[install_bitwarden] {bitwarden_dir} 소유권 변경함") 
+    result = subprocess.run(["sudo", "chmod", "+x", bitwarden_script], check=True)
+    if result.returncode == 0:
+        log_info(f"[install_bitwarden] {bitwarden_script} 실행권한 부여함")
+    result = subprocess.run(["sudo", "chown", "bitwarden:bitwarden", bitwarden_script], check=True)
+    if result.returncode == 0:
+        log_info(f"[install_bitwarden] {bitwarden_script} 소유권 변경함")   
+
+    # 3) 사용자에게 설치 안내 (설치스크립트 존재 여부는 체크하지 않음)
     instructions = (
         "Bitwarden이 설치되어 있지 않으므로 수동설치를 진행하세요.\n\n"
         "다른 터미널에서 다음 명령을 실행해 설치하십시오:\n\n"
         f"   sudo -su bitwarden\n"
         f"   cd {bitwarden_dir}\n"
         f"   ./bitwarden.sh install\n\n"
-        "설치가 완료되면 이 터미널로 돌아와 Enter 키를 눌러 계속합니다.\n"
+        "설치 중 domain name은 반드시 다음을 입력하세요.\n"    
+        "bitwarden.ai4infra.internal\n"
+        "Installation ID:는 다음을 입력하셔도 됩니다.\n"    
+        "9430bf8f-2e8e-4819-89cf-b3a501117d6a\n"
+        "Installation Key::는 다음을 입력하셔도 됩니다.\n"    
+        "32QrtRae5lWV2GNWZBuP\n"    
     )
     log_info(instructions)
     input("설치 완료 후 Enter 키를 눌러 계속합니다...")
 
-    # 3) 설치 완료 여부 확인
-    if Path(compose_file).exists():
+    # 4) 설치 완료 여부 확인 (sudo로 권한 우회)
+    result = subprocess.run(
+        ["sudo", "test", "-f", compose_file],
+        capture_output=True
+    )
+    
+    if result.returncode == 0:
         log_info("[install_bitwarden] Bitwarden 설치가 완료되었습니다.")
         return True
     else:
         log_error("[install_bitwarden] 설치가 완료되지 않았습니다. 수동 확인이 필요합니다.")
         return False
-
 
 def apply_override(service: str) -> bool:
     if service != "bitwarden":
@@ -56,12 +79,23 @@ def apply_override(service: str) -> bool:
         log_info(f"[apply_override] Bitwarden override 템플릿 없음: {src}")
         return True
 
-    # Bitwarden 설치가 정상적으로 완료되었을 때만 bwdata/docker 경로가 생성됨
-    if not dst.parent.exists():
+    # Bitwarden 설치가 정상적으로 완료되었을 때만 bwdata/docker 경로가 생성됨 (sudo로 확인)
+    result = subprocess.run(
+        ["sudo", "test", "-d", str(dst.parent)],
+        capture_output=True
+    )
+    
+    if result.returncode != 0:
         log_debug("[apply_override] Bitwarden 설치 전이므로 override 적용 생략")
         return True
 
-    if dst.exists():
+    # override 파일 존재 여부 확인 (sudo로 확인)
+    result = subprocess.run(
+        ["sudo", "test", "-f", str(dst)],
+        capture_output=True
+    )
+    
+    if result.returncode == 0:
         log_info(f"[apply_override] override 이미 존재, 유지함: {dst}")
         return True
 
@@ -76,13 +110,22 @@ def apply_override(service: str) -> bool:
             check=True, capture_output=True, text=True
         )
 
+        # override 파일 소유권 및 권한 설정
+        subprocess.run(
+            ["sudo", "chown", "bitwarden:bitwarden", str(dst)],
+            check=True, capture_output=True, text=True
+        )
+        subprocess.run(
+            ["sudo", "chmod", "644", str(dst)],
+            check=True, capture_output=True, text=True
+        )
+
         log_info(f"[apply_override] override 적용 완료 → {dst}")
         return True
 
     except subprocess.CalledProcessError as e:
         log_error(f"[apply_override] override 적용 실패: {e.stderr}")
         return False
-
 
 def bitwarden_start():
     bitwarden_dir = f"{BASE_DIR}/bitwarden"

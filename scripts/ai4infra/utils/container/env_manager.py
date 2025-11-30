@@ -33,7 +33,6 @@ def extract_env_vars(env_path: str, section: str) -> dict:
                 env_vars[k.strip()] = v.strip()
     return env_vars
 
-
 def extract_config_vars(service: str) -> dict:
     """./config/{service}.yml 읽고 ${PROJECT_ROOT}, ${BASE_DIR} 치환"""
     config_path = Path(f"./config/{service}.yml")
@@ -57,7 +56,6 @@ def extract_config_vars(service: str) -> dict:
         return v
 
     return sub_vars(data)
-
 
 def generate_env(service: str) -> str:
 

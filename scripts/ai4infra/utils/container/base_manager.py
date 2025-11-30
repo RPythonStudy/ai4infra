@@ -6,6 +6,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from common.logger import log_debug, log_error, log_info
+from utils.container.bitwarden_installer import bitwarden_start
+
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
@@ -117,7 +119,6 @@ def start_container(service: str):
     """단일 서비스 컨테이너 시작 - 디버깅 강화 버전"""
 
     if service == "bitwarden":
-        from utils.container_manager import bitwarden_start
         bitwarden_start()
         return
     else:

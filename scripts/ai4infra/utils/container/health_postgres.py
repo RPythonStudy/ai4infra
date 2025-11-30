@@ -67,7 +67,6 @@ def check_postgres(service: str) -> bool:
     # TLS가 실제 "on"이면 기본 인증 파일 경로와 존재 여부는 별도 점검
     return check_postgres_tls_diagnostics(container, tls_must_be_on=True)
 
-
 def check_postgres_tls_diagnostics(container: str, tls_must_be_on: bool=False) -> bool:
     log_info("[TLS-DIAG] PostgreSQL TLS 진단 시작")
 
@@ -154,23 +153,19 @@ def check_postgres_tls_diagnostics(container: str, tls_must_be_on: bool=False) -
     log_info("[TLS-DIAG] TLS 설정 및 파일 검증 완료 (모두 OK)")
     return True
 
-
 def run_psql_show(container: str, name: str) -> str:
     cmd = f"sudo docker exec {container} psql -U postgres -t -c \"SHOW {name};\""
     res = subprocess.run(cmd, shell=True, text=True, capture_output=True)
     return res.stdout.strip()
 
-
 def file_exists_in_container(container: str, path: str) -> bool:
     test = subprocess.run(f"sudo docker exec {container} test -f '{path}'", shell=True)
     return test.returncode == 0
-
 
 def run_stat(container: str, path: str) -> str:
     cmd = f"sudo docker exec {container} stat -c '%a' '{path}'"
     res = subprocess.run(cmd, shell=True, text=True, capture_output=True)
     return res.stdout.strip()
-
 
 def run_owner(container: str, path: str) -> str:
     cmd = f"sudo docker exec {container} stat -c '%U:%G' '{path}'"

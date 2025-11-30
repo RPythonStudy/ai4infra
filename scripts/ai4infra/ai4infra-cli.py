@@ -291,8 +291,6 @@ def restore(
 
     log_info(f"[install] {service} 설치 및 점검 완료")
 
-
-
 @app.command()
 def init_vault():
     """Vault 프로덕션 모드 초기화 - 첫 실행 시에만"""
@@ -349,7 +347,6 @@ def init_vault():
             log_error("[init_vault] 초기화 실패")
             if e.stderr:
                 print(e.stderr)
-
 
 @app.command()
 def unseal_vault():
@@ -422,7 +419,6 @@ def unseal_vault():
 
     log_info("[unseal_vault] 사용자에게 Vault 언실 명령 실행 안내 완료")
 
-
 @app.command()
 def install_rootca_windows():
     """
@@ -431,10 +427,10 @@ def install_rootca_windows():
     
     install_root_ca_windows()
 
-
 if __name__ == "__main__":
     try:
         app()
     except Exception as e:
         log_error(str(e))
         sys.exit(1)
+        s
