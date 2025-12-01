@@ -16,11 +16,10 @@ PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
 
 
-def backup_data(service: str, data_folder: str = None) -> str:
-
-    # install()과 완전히 동일한 서비스 선택 방식
-    services = list(discover_services()) if service == "all" else [service]
-
+def backup_data(service: str) -> str:
+    """
+    단일 서비스(service)의 data 디렉터리를 백업한다.
+    """
 
     # ------------------------------------------------------
     # 1) config에서 path.data 로드
