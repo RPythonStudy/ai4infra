@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from common.load_config import load_config
 from common.logger import log_debug, log_error, log_info, log_warn
+from common.sudo_helpers import sudo_exists
 from utils.container.installer import discover_services
 
 load_dotenv()
@@ -22,7 +23,7 @@ def backup_data(service: str) -> str:
     """
 
     # ------------------------------------------------------
-    # 1) config에서 path.data 로드
+    # 1) config에서 path.directories.data 로드
     # ------------------------------------------------------
     cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
 
@@ -33,7 +34,8 @@ def backup_data(service: str) -> str:
         return ""
 
     path_cfg = cfg.get("path", {})
-    data_path = path_cfg.get("data")
+    dirs = path_cfg.get("directories", {})
+    data_path = dirs.get("data")
 
     # ------------------------------------------------------
     # 2) data_dir 결정 (config 우선)
@@ -41,13 +43,13 @@ def backup_data(service: str) -> str:
     if data_path:
         src_dir = data_path
     else:
-        # fallback — 거의 사용되지 않도록 path.data를 설정하는 것이 권장됨
+        # fallback
         src_dir = f"{BASE_DIR}/{service}/data"
 
     # ------------------------------------------------------
-    # 3) data_dir 존재 여부 확인
+    # 3) data_dir 존재 여부 확인 (sudo로 확인)
     # ------------------------------------------------------
-    if not os.path.exists(src_dir):
+    if not sudo_exists(src_dir):
         log_info(f"[backup_data] {service}: 백업할 data 디렉터리 없음 ({src_dir})")
         return ""
 
@@ -81,14 +83,14 @@ def restore_data(service: str, backup_path: str) -> bool:
     services = list(discover_services()) if service == "all" else [service]
 
     # -----------------------------------------
-    # 1) 백업 경로 존재 확인
+    # 1) 백업 경로 존재 확인 (sudo로 확인)
     # -----------------------------------------
-    if not os.path.exists(backup_path):
+    if not sudo_exists(backup_path):
         log_error(f"[restore_data] 백업 경로 없음: {backup_path}")
         return False
 
     # -----------------------------------------
-    # 2) config/<service>.yml 에서 path.data 로드
+    # 2) config/<service>.yml 에서 path.directories.data 로드
     # -----------------------------------------
     cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
 
@@ -99,10 +101,11 @@ def restore_data(service: str, backup_path: str) -> bool:
         return False
 
     path_cfg = cfg.get("path", {})
-    data_path = path_cfg.get("data")
+    dirs = path_cfg.get("directories", {})
+    data_path = dirs.get("data")
 
     # -----------------------------------------
-    # 3) data_dir 결정 (bitwarden 예외는 config에서 해결 가능)
+    # 3) data_dir 결정
     # -----------------------------------------
     if data_path:
         restore_target = data_path

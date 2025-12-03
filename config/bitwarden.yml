@@ -1,11 +1,13 @@
 ###############################################
 # 파일명: config/bitwarden.yml
-# 목적: Bitwarden 서비스 설정
-# 내용:
-#   - TLS 인증서 경로/권한
-#   - bwdata 마운트 폴더 권한
-#   - UID/GID 및 파일모드 일관 관리
+# 목적: Bitwarden 서비스 설정 (TLS + 권한 + 경로)
+# 구조원칙:
+#   - directories.*는 "항상 폴더"
+#   - files.*는 "항상 파일명"
+#   - TLS 인증서 경로는 CERTS_DIR + 파일명 조합
+#   - domain은 .env 의 BITWARDEN_DOMAIN 사용
 # 변경이력:
+#   - 2025-12-03: directory file 분리 (BenKorea)
 #   - 2025-11-22: 최초 작성 (BenKorea)
 ###############################################
 
@@ -13,13 +15,20 @@ service:
   enable: true
 
 path:
-  data: ${BASE_DIR}/bitwarden/bwdata  
-  private_key: ${BASE_DIR}/bitwarden/bwdata/ssl/${BITWARDEN_DOMAIN}/private.key
-  service_crt: ${BASE_DIR}/bitwarden/bwdata/ssl/${BITWARDEN_DOMAIN}/certificate.crt
+  directories:
+    data: "${BASE_DIR}/bitwarden/bwdata"
+    certs: "${BASE_DIR}/bitwarden/bwdata/ssl/${BITWARDEN_DOMAIN}"
+
+  files:
+    private_key: "private.key"
+    certificate: "certificate.crt"
+    csr: "request.csr"
+    root_ca: "ca.crt"
 
 permissions:
   uid: 1001
   gid: 1001
-  data_dir_mode: "700"
-  key_mode: "600"
-  cert_mode: "644"
+  data_dir_mode: "700"     # bwdata
+  key_mode: "600"          # private.key
+  cert_mode: "644"         # cert, rootCA, chain
+  

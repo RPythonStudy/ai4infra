@@ -1,38 +1,45 @@
 ####################################
 # 파일명: config/vault.yml
-# 목적: HashiCorp Vault 설정
-# 기능: 
-#  - 보안 시크릿 관리 서비스 설정
-#  - 인증서 및 키 관리
+# 목적: HashiCorp Vault 설정 (TLS + 권한 + 경로)
+# 구조 원칙:
+#   - path.directories.* 는 "항상 폴더"
+#   - path.files.* 는 "항상 파일명"
+#   - 인증서 경로는 CERTS_DIR + 파일명 조합으로 자동 생성
+#   - TLS 여부는 tls.enable 로 제어
 # 변경이력
-#  - 2025-10-06: docker-compose.yml용 변수 설정 (BenKorea)
+#   - 2025-12-03: directory file 분리 (BenKorea)
+#   - 2025-10-06: docker-compose.yml용 변수 설정 (BenKorea)
 #####################################
 
 service:
   enable: true
 
 path:
-  data: ${BASE_DIR}/vault/file
-  config: ${BASE_DIR}/vault/config
-  private_key: ${BASE_DIR}/vault/certs/private.key
-  csr: ${BASE_DIR}/vault/certs/request.csr
-  service_crt: ${BASE_DIR}/vault/certs/certificate.crt
-  root_ca: ${BASE_DIR}/vault/certs/rootCA.crt
+  directories:
+    data:   "${BASE_DIR}/vault/file"
+    config: "${BASE_DIR}/vault/config"
+    certs:  "${BASE_DIR}/vault/certs"
 
-# permissions:
-#   uid: 70
-#   gid: 70
-#   data_dir_mode: "700"
-#   key_mode: "600"
-#   cert_mode: "644"
+  files:
+    private_key: "private.key"
+    certificate: "certificate.crt"
+    csr:         "request.csr"
+    root_ca:     "rootCA.crt"
+
+permissions:
+  uid: 0
+  gid: 0
+  data_dir_mode: "700"
+  key_mode: "600"
+  cert_mode: "644"
 
 tls:
   enable: true
 
 env_vars:
-  VAULT_ADDR: https://0.0.0.0:8200
-  VAULT_API_ADDR: https://vault:8200
+  VAULT_ADDR: "https://0.0.0.0:8200"
+  VAULT_API_ADDR: "https://vault:8200"
 
 compose_vars:
   PORT: 8200
- 
+  

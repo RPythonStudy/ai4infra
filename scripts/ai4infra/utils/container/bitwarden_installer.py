@@ -7,6 +7,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from common.logger import log_debug, log_error, log_info
+from common.sudo_helpers import sudo_exists
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
@@ -18,24 +19,14 @@ def handle_bitwarden_manual_install() -> bool:
     bitwarden_script = f"{bitwarden_dir}/bitwarden.sh"
     compose_file = f"{bitwarden_dir}/bwdata/docker/docker-compose.yml"
 
-    # 1) 이미 설치되어 있는지 검사 (bitwarden.sh + compose 파일)
-    if Path(bitwarden_script).exists() and Path(compose_file).exists():
+    # 1) 이미 설치되어 있는지 검사 (bitwarden.sh + compose 파일, sudo로 확인)
+    if sudo_exists(bitwarden_script) and sudo_exists(compose_file):
         log_info("[install_bitwarden] Bitwarden이 이미 설치되어 다음단계를 진행합니다.")
         return True
 
-    # 2) 서비스폴더/설치파일 실행권한 및 소유권 변경
-    result = subprocess.run(["sudo", "chmod", "-R", "700", bitwarden_dir], check=True)
-    if result.returncode == 0:
-        log_info(f"[install_bitwarden] {bitwarden_dir} 실행권한 변경함") 
-    result = subprocess.run(["sudo", "chown", "-R", "bitwarden:bitwarden", bitwarden_dir], check=True)
-    if result.returncode == 0:
-        log_info(f"[install_bitwarden] {bitwarden_dir} 소유권 변경함") 
-    result = subprocess.run(["sudo", "chmod", "+x", bitwarden_script], check=True)
-    if result.returncode == 0:
-        log_info(f"[install_bitwarden] {bitwarden_script} 실행권한 부여함")
-    result = subprocess.run(["sudo", "chown", "bitwarden:bitwarden", bitwarden_script], check=True)
-    if result.returncode == 0:
-        log_info(f"[install_bitwarden] {bitwarden_script} 소유권 변경함")   
+    # 2) 권한 설정은 apply_service_permissions()에서 이미 완료됨
+    # 여기서는 설치 안내만 수행
+    log_info("[install_bitwarden] Bitwarden 수동 설치 대기 중...")   
 
     # 3) 사용자에게 설치 안내 (설치스크립트 존재 여부는 체크하지 않음)
     instructions = (

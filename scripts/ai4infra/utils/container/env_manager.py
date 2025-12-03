@@ -15,8 +15,15 @@ BASE_DIR = os.getenv("BASE_DIR", "/opt/ai4infra")
 
 
 def extract_env_vars(env_path: str, section: str) -> dict:
-    """지정된 섹션(# SECTION) 아래 key=value 쌍을 추출"""
-    section_header = f"# {section.upper()}"
+    """
+    지정된 섹션(# SECTION) 아래 key=value 쌍을 추출
+    
+    Notes
+    -----
+    # SECTION 뒤에 추가 텍스트가 있어도 인식
+    예: # BITWARDEN, # BITWARDEN compose_vars 모두 인식
+    """
+    section_prefix = f"# {section.upper()}"
     env_vars, in_section = {}, False
 
     with open(env_path, encoding="utf-8") as f:
@@ -26,7 +33,8 @@ def extract_env_vars(env_path: str, section: str) -> dict:
                 in_section = False
                 continue
             if line.startswith("#"):
-                in_section = (line == section_header)
+                # "# SECTION"으로 시작하면 매칭 (뒤에 텍스트 무시)
+                in_section = line.startswith(section_prefix)
                 continue
             if in_section and "=" in line:
                 k, v = line.split("=", 1)

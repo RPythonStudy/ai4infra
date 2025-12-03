@@ -111,7 +111,10 @@ def install(
         # 3) 템플릿 복사
         copy_template(svc)
 
-        # 4) Bitwarden 설치는 수동 단계이므로 안내 + 검증을 수행합니다.
+        # 4) 서비스별 권한 설정 (복사 직후 실행)
+        apply_service_permissions(svc)
+
+        # 5) Bitwarden 설치는 수동 단계이므로 안내 + 검증을 수행합니다.
         if svc == "bitwarden":
             ok = handle_bitwarden_manual_install()
             if not ok:
@@ -120,11 +123,8 @@ def install(
             apply_override("bitwarden")
 
 
-        # 5) 서비스별 인증서 생성 (Bitwarden 설치 완료 후)
+        # 6) 서비스별 인증서 생성 (Bitwarden 설치 완료 후)
         create_service_certificate(service=svc, san=None)
-
-        # 6) 서비스별 권한 설정 (데이터/인증서 디렉터리)
-        apply_service_permissions(svc)
 
         # 7) --backup 모드: 데이터 복원
         if backup and backup_path:
