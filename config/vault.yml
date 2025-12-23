@@ -14,6 +14,9 @@
 service:
   enable: true
 
+backup:
+  mode: "hot" # hot or cold (default: cold)
+
 path:
   directories:
     data:   "${BASE_DIR}/vault/file"
@@ -42,4 +45,5 @@ env_vars:
 
 compose_vars:
   PORT: 8200
+  VAULT_MEM_LIMIT: "640m"
   

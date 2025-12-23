@@ -44,7 +44,8 @@ from utils.container.health_vault import check_vault
 from utils.container.health_postgres import check_postgres
 
 # service discovery
-from utils.container.installer import discover_services
+from utils.container.installer import discover_services, is_hot_backup_service
+from common.load_config import load_config
 
 #
 from utils.container.env_manager import generate_env
@@ -79,23 +80,42 @@ def install(
     backup: bool = typer.Option(False, "--backup", help="데이터 백업 → 서비스 폴더 삭제 → 설치 → 데이터 복원")
 ):
     
+    # discover_services() 함수로 서비스 목록을 가져옴
     services = list(discover_services()) if service == "all" else [service]
     for svc in services:
         service_dir = f"{BASE_DIR}/{svc}"
         backup_path = None
 
-        # 1) 컨테이너 중지
-        stop_container(f"ai4infra-{svc}")
+        # 1-1) 서비스별 백업 방식 결정 (Hot vs Cold)
+        is_hot_backup = is_hot_backup_service(svc)
+
+        # 1-2) Cold Backup인 경우나, 백업이 필요 없는 경우 먼저 중지
+        # (Hot Backup인 경우 백업 후 중지해야 함)
+        if not is_hot_backup or not backup:
+            stop_container(f"ai4infra-{svc}")
 
         # 2) 데이터 처리 (3가지 모드)
         if reset:
+            # 이미 중지되었거나 Hot Backup 대기 중
+            if is_hot_backup and backup: # 리셋인데 백업 옵션이 있는 경우 (특이케이스)
+                 pass # 아래 backup 블록에서 처리
+
+             # 확실히 중지
+            stop_container(f"ai4infra-{svc}")
+            
             log_info(f"[install] --reset 모드: {svc} 서비스폴더 삭제진행")
             subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
             log_info(f"[install] {service_dir} 삭제 완료")
 
         elif backup:
             log_info(f"[install] --backup 모드: {svc} 데이터백업 시작")
+            
+            # Hot Backup은 running 상태에서 수행
             backup_path = backup_data(svc)
+            
+            # 백업 후에는 반드시 중지 (설치/복원 위해)
+            stop_container(f"ai4infra-{svc}")
+            
             if not backup_path:
                 log_error(f"[install] {svc} 백업 실패 → 설치 중단")
                 continue
@@ -106,6 +126,7 @@ def install(
             log_info(f"[install] {service_dir} 삭제 완료")
 
         else:
+            # 멱등성 모드 (stop_container는 위에서 이미 호출됨)
             log_info(f"[install] 옵션 없음 = 멱등성 모드: {svc} 기존 데이터∙설정 유지")
 
         # 3) 템플릿 복사
@@ -196,17 +217,24 @@ def backup(service: str = typer.Argument(..., help="백업할 서비스 (postgre
     backup_files = []
 
     for svc in services:
+        
+        # 서비스별 백업 방식 결정 (Hot vs Cold)
+        is_hot_backup = is_hot_backup_service(svc)
 
-        # 1) 컨테이너 중지
-        stop_container(f"ai4infra-{svc}")
+        # 1) Cold Backup인 경우에만 먼저 중지
+        if not is_hot_backup:
+            stop_container(f"ai4infra-{svc}")
 
-        # 2) 백업
+        # 2) 백업 수행
         backup_file = backup_data(svc)
         if backup_file:
             backup_files.append(backup_file)
 
-        # 3) 컨테이너 재시작
-        start_container(svc)
+        # 3) 상태 복구 (Hot: 유지 / Cold: 재시작)
+        if not is_hot_backup:
+            start_container(svc)
+        else:
+            log_info(f"[backup] {svc}: Hot Backup 완료 (컨테이너 유지됨)")
 
     if backup_files:
         log_info(f"[backup] {len(backup_files)}개 백업 완료")

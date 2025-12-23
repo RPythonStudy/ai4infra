@@ -15,6 +15,9 @@
 service:
   enable: true
 
+backup:
+  mode: "hot" # hot or cold (default: cold)
+
 path:
   directories:
     data:   "${BASE_DIR}/postgres/data"

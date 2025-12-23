@@ -87,15 +87,29 @@ def generate_env(service: str) -> str:
 
     # 3) path.* → DATA_DIR / CERTS_DIR / CONF_DIR 자동 생성
     paths = config_vars.get("path", {})
+    directories = paths.get("directories", {})
+    files = paths.get("files", {})
 
-    if "data" in paths:
-        merged["DATA_DIR"] = paths["data"]
+    # data -> DATA_DIR
+    if "data" in directories:
+        merged["DATA_DIR"] = directories["data"]
 
-    if "private_key" in paths:
-        merged["CERTS_DIR"] = str(Path(paths["private_key"]).parent)
-
-    if "config" in paths:
-        merged["CONF_DIR"] = paths["config"]
+    # config -> CONF_DIR
+    if "config" in directories:
+        merged["CONF_DIR"] = directories["config"]
+        
+    # private_key file path -> CERTS_DIR (Parent dir)
+    if "private_key" in files:
+        # files["private_key"] may be just filename "private.key" or full path
+        # config.yml define: certs: "${BASE_DIR}/vault/certs"
+        # We should use directories["certs"] if available for CERTS_DIR
+        if "certs" in directories:
+            merged["CERTS_DIR"] = directories["certs"]
+        else:
+             # Fallback: if private_key is full path
+             pk = files["private_key"]
+             if "/" in pk:
+                 merged["CERTS_DIR"] = str(Path(pk).parent)
 
     # 4) 저장할 디렉터리
     service_dir = Path(f"{BASE_DIR}/{service}")
