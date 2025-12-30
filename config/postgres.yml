@@ -17,6 +17,7 @@ service:
 
 backup:
   mode: "hot" # hot or cold (default: cold)
+  method: "pg_dump"
 
 path:
   directories:

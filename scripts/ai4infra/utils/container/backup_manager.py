@@ -154,24 +154,29 @@ def backup_data(service: str) -> str:
     # 1. 데이터 수집 (Hook or File Copy)
     # ---------------------------------------------
     data_collected = False
-    
-    if service == "postgres":
+
+    # Config 로드
+    cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
+    cfg = load_config(cfg_path) or {}
+    backup_cfg = cfg.get("backup", {})
+    method = backup_cfg.get("method", "copy")  # default: copy
+
+    log_debug(f"[backup_data] {service} backup method: {method}")
+
+    if method == "pg_dump":
         if _run_hook_postgres(service, temp_root):
             data_collected = True
             
-    elif service == "vault":
+    elif method == "raft_snapshot":
         if _run_hook_vault(service, temp_root):
             data_collected = True
             
     else:
-        # 일반 서비스: 데이터 디렉터리 복사
-        # 기존 로직 (config 로드 등)
-        cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
+        # 일반 서비스: 데이터 디렉터리 복사 (method="copy" or others)
         src_dir = f"{BASE_DIR}/{service}/data"
         
-        # Config Override 확인
+        # Config Override 확인 (already loaded cfg)
         try:
-            cfg = load_config(cfg_path) or {}
             path_cfg = cfg.get("path", {})
             dirs = path_cfg.get("directories", {})
             if dirs.get("data"):
@@ -265,11 +270,19 @@ def restore_data(service: str, backup_path: str) -> bool:
     # 3. 데이터 복원 (Hook or File Copy)
     # ---------------------------------------------
     success = False
+
+    # Config 로드 (복원 시에도 method 확인 필요)
+    cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
+    cfg = load_config(cfg_path) or {}
+    backup_cfg = cfg.get("backup", {})
+    method = backup_cfg.get("method", "copy")
+
+    log_debug(f"[restore_data] {service} restore method: {method}")
     
-    if service == "postgres":
+    if method == "pg_dump":
         success = _run_restore_hook_postgres(service, temp_extract_root)
         
-    elif service == "vault":
+    elif method == "raft_snapshot":
         success = _run_restore_hook_vault(service, temp_extract_root)
         
     else:
@@ -277,10 +290,9 @@ def restore_data(service: str, backup_path: str) -> bool:
         src_data = f"{temp_extract_root}/data"
         if os.path.exists(src_data):
             # 타겟 경로 계산
-            cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
             dst_dir = f"{BASE_DIR}/{service}/data"
             try:
-                cfg = load_config(cfg_path) or {}
+                # cfg already loaded
                 path_cfg = cfg.get("path", {})
                 dirs = path_cfg.get("directories", {})
                 if dirs.get("data"):

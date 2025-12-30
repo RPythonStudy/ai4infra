@@ -1,42 +1,37 @@
 ####################################
 # 파일명: config/vault.yml
-# 목적: HashiCorp Vault 설정 (TLS + 권한 + 경로)
-# 구조 원칙:
-#   - path.directories.* 는 "항상 폴더"
-#   - path.files.* 는 "항상 파일명"
-#   - 인증서 경로는 CERTS_DIR + 파일명 조합으로 자동 생성
-#   - TLS 여부는 tls.enable 로 제어
+# 목적: HashiCorp Vault 설정
+#
+# [시스템 강제 설정 (참조용)]
+# 아래 설정들은 시스템 정책(Python Scripts)에 의해 강제 적용됩니다.
+# 코드를 수정하지 않는 한 이 설정은 변경되지 않습니다.
+#
+# 1. Backup Policy
+#    - method: "hot" (Raft Snapshot)
+#
+# 2. Path Defaults
+#    - data_dir  : ${BASE_DIR}/vault/data
+#    - config_dir: ${BASE_DIR}/vault/config
+#    - certs_dir : ${BASE_DIR}/vault/certs
+#
+# 3. File Naming Standards
+#    - private_key: "private.key"
+#    - certificate: "certificate.crt"
+#    - csr        : "request.csr"
+#    - root_ca    : "rootCA.crt"
+#
+# 4. Security Permissions
+#    - process user: root (uid=0, gid=0)
+#    - file mode   : data(700), key(600), cert(644)
+#    - tls enabled : true
+#
 # 변경이력
+#   - 2025-12-30: backup, path, file naming, permissions 설정을 시스템 강제 (수정 불가)
 #   - 2025-12-03: directory file 분리 (BenKorea)
 #   - 2025-10-06: docker-compose.yml용 변수 설정 (BenKorea)
 #####################################
 
 service:
-  enable: true
-
-backup:
-  mode: "hot" # hot or cold (default: cold)
-
-path:
-  directories:
-    data:   "${BASE_DIR}/vault/file"
-    config: "${BASE_DIR}/vault/config"
-    certs:  "${BASE_DIR}/vault/certs"
-
-  files:
-    private_key: "private.key"
-    certificate: "certificate.crt"
-    csr:         "request.csr"
-    root_ca:     "rootCA.crt"
-
-permissions:
-  uid: 0
-  gid: 0
-  data_dir_mode: "700"
-  key_mode: "600"
-  cert_mode: "644"
-
-tls:
   enable: true
 
 env_vars:

@@ -455,13 +455,25 @@ def apply_service_permissions(service: str) -> bool:
     try:
         cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
         cfg = load_config(cfg_path) 
-        perms = cfg.get("permissions", {})
-
-        uid = perms.get("uid")
-        gid = perms.get("gid")
-        data_mode = str(perms.get("data_dir_mode", "700"))
-        key_mode = str(perms.get("key_mode", "600"))
-        cert_mode = str(perms.get("cert_mode", "644"))
+        # [변경] Config에서 Permission 로드 로직 제거 → Secure Default 강제
+        # uid/gid는 서비스별 하드코딩 (이미지 스펙 의존)
+        
+        # 기본값 (root:root)
+        uid = 0
+        gid = 0
+        
+        if service == "postgres":
+            uid = 70
+            gid = 70
+        elif service == "bitwarden":
+            uid = 1001
+            gid = 1001
+        # vault는 root(0) 사용
+        
+        # Mode 강제
+        data_mode = "700"  # User only
+        key_mode = "600"   # User read/write
+        cert_mode = "644"  # World readable for certs
 
         service_dir = Path(BASE_DIR) / service
         path_cfg = cfg.get("path", {})

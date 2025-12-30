@@ -86,30 +86,28 @@ def generate_env(service: str) -> str:
     merged = {**env_vars, **config_env_vars}
 
     # 3) path.* → DATA_DIR / CERTS_DIR / CONF_DIR 자동 생성
+    # [변경] YAML에 정의되지 않았으면, 시스템 표준 경로(defaults)를 강제 적용
     paths = config_vars.get("path", {})
     directories = paths.get("directories", {})
     files = paths.get("files", {})
 
-    # data -> DATA_DIR
-    if "data" in directories:
-        merged["DATA_DIR"] = directories["data"]
+    # (1) data -> DATA_DIR
+    # YAML에 있으면 그 값, 없으면 ${BASE_DIR}/${service}/data
+    merged["DATA_DIR"] = directories.get("data", f"{BASE_DIR}/{service}/data")
 
-    # config -> CONF_DIR
-    if "config" in directories:
-        merged["CONF_DIR"] = directories["config"]
+    # (2) config -> CONF_DIR
+    # YAML에 있으면 그 값, 없으면 ${BASE_DIR}/${service}/config
+    merged["CONF_DIR"] = directories.get("config", f"{BASE_DIR}/{service}/config")
         
-    # private_key file path -> CERTS_DIR (Parent dir)
-    if "private_key" in files:
-        # files["private_key"] may be just filename "private.key" or full path
-        # config.yml define: certs: "${BASE_DIR}/vault/certs"
-        # We should use directories["certs"] if available for CERTS_DIR
-        if "certs" in directories:
-            merged["CERTS_DIR"] = directories["certs"]
-        else:
-             # Fallback: if private_key is full path
-             pk = files["private_key"]
-             if "/" in pk:
-                 merged["CERTS_DIR"] = str(Path(pk).parent)
+    # (3) certs & keys -> CERTS_DIR
+    # YAML에 'path.directories.certs'가 명시되어 있으면 우선 사용
+    if "certs" in directories:
+        merged["CERTS_DIR"] = directories["certs"]
+    else:
+        # 없으면 기본값: ${BASE_DIR}/${service}/certs
+        # (단, 구 하위호환성을 위해 files['private_key'] 경로 체크 로직은 제거하거나 후순위로 둠.
+        #  현재 정책상 무조건 certs 디렉터리로 통합 관리)
+        merged["CERTS_DIR"] = f"{BASE_DIR}/{service}/certs"
 
     # 4) 저장할 디렉터리
     service_dir = Path(f"{BASE_DIR}/{service}")
