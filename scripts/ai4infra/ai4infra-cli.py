@@ -17,8 +17,7 @@ from dotenv import load_dotenv
 from common.logger import log_debug, log_error, log_info
 
 # user manager
-from utils.container.user_manager import create_user
-from utils.container.user_manager import add_docker_group
+
 
 # base manager
 from utils.container.base_manager import stop_container
@@ -31,9 +30,7 @@ from utils.container.backup_manager import backup_data
 from utils.container.backup_manager import restore_data
 
 # bitwarden installer
-from utils.container.bitwarden_installer import handle_bitwarden_manual_install
-from utils.container.bitwarden_installer import bitwarden_start
-from utils.container.bitwarden_installer import apply_override
+
 
 # USB secrets
 from utils.container.usb_secrets import setup_usb_secrets
@@ -69,9 +66,7 @@ def generate_rootca():
     generate_root_ca_if_needed()
 
 @app.command()
-def create_bitwarden_user():
-    create_user(username="bitwarden")
-    add_docker_group(user="bitwarden")
+
     
 @app.command()
 def install(
@@ -86,35 +81,16 @@ def install(
         service_dir = f"{BASE_DIR}/{svc}"
         backup_path = None
 
-        # 1-1) 서비스별 백업 방식 결정 (Hot vs Cold)
-        is_hot_backup = is_hot_backup_service(svc)
+        # [Policy] 설치 시에는 항상 먼저 중지 (Cold Backup Enforcement)
+        # 1) 컨테이너 중지
+        stop_container(f"ai4infra-{svc}")
 
-        # 1-2) Cold Backup인 경우나, 백업이 필요 없는 경우 먼저 중지
-        # (Hot Backup인 경우 백업 후 중지해야 함)
-        if not is_hot_backup or not backup:
-            stop_container(f"ai4infra-{svc}")
-
-        # 2) 데이터 처리 (3가지 모드)
-        if reset:
-            # 이미 중지되었거나 Hot Backup 대기 중
-            if is_hot_backup and backup: # 리셋인데 백업 옵션이 있는 경우 (특이케이스)
-                 pass # 아래 backup 블록에서 처리
-
-             # 확실히 중지
-            stop_container(f"ai4infra-{svc}")
+        # 2) 데이터 처리
+        if backup:
+            log_info(f"[install] --backup 모드: {svc} Cold Backup(Physical) 시작")
             
-            log_info(f"[install] --reset 모드: {svc} 서비스폴더 삭제진행")
-            subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
-            log_info(f"[install] {service_dir} 삭제 완료")
-
-        elif backup:
-            log_info(f"[install] --backup 모드: {svc} 데이터백업 시작")
-            
-            # Hot Backup은 running 상태에서 수행
-            backup_path = backup_data(svc)
-            
-            # 백업 후에는 반드시 중지 (설치/복원 위해)
-            stop_container(f"ai4infra-{svc}")
+            # 컨테이너가 꺼져 있으므로 "copy" 방식 강제
+            backup_path = backup_data(svc, method_override="copy")
             
             if not backup_path:
                 log_error(f"[install] {svc} 백업 실패 → 설치 중단")
@@ -122,6 +98,11 @@ def install(
             
             log_info(f"[install] 데이터백업 완료 → {backup_path}")
             log_info(f"[install] {svc} 서비스폴더 삭제진행")
+            subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
+            log_info(f"[install] {service_dir} 삭제 완료")
+
+        elif reset:
+            log_info(f"[install] --reset 모드: {svc} 서비스폴더 삭제진행")
             subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
             log_info(f"[install] {service_dir} 삭제 완료")
 
@@ -135,13 +116,7 @@ def install(
         # 4) 서비스별 권한 설정 (복사 직후 실행)
         apply_service_permissions(svc)
 
-        # 5) Bitwarden 설치는 수동 단계이므로 안내 + 검증을 수행합니다.
-        if svc == "bitwarden":
-            ok = handle_bitwarden_manual_install()
-            if not ok:
-                log_error("[install] Bitwarden manual install 실패 → skip")
-                continue
-            apply_override("bitwarden")
+        # 5) (구 Bitwarden 수동 설치 로직 제거됨)
 
 
         # 6) 서비스별 인증서 생성 (Bitwarden 설치 완료 후)
@@ -180,7 +155,7 @@ def install(
             log_info("[install] PostgreSQL 컨테이너 중지 완료 (TLS 적용 준비)")
 
             # 2) override 파일 복사
-            override_src = f"{PROJECT_ROOT}/template/postgres/docker-compose.override.yml"
+            override_src = f"{PROJECT_ROOT}/templates/postgres/docker-compose.override.yml"
             override_dst = f"{BASE_DIR}/postgres/docker-compose.override.yml"
 
             if Path(override_src).exists():

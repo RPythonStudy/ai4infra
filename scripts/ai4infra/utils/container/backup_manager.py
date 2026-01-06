@@ -130,7 +130,7 @@ def _run_restore_hook_vault(service: str, extract_dir: str) -> bool:
         return False
 
 
-def backup_data(service: str) -> str:
+def backup_data(service: str, method_override: str = None) -> str:
     """
     서비스 백업 (암호화 + 압축)
     1. 임시 디렉터리에 데이터 수집 (Hook 또는 파일 복사)
@@ -159,7 +159,7 @@ def backup_data(service: str) -> str:
     cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
     cfg = load_config(cfg_path) or {}
     backup_cfg = cfg.get("backup", {})
-    method = backup_cfg.get("method", "copy")  # default: copy
+    method = method_override if method_override else backup_cfg.get("method", "copy")  # override 우선
 
     log_debug(f"[backup_data] {service} backup method: {method}")
 

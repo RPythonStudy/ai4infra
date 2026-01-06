@@ -1,0 +1,18 @@
+version: '3'
+
+services:
+  vaultwarden:
+    image: vaultwarden/server:1.35.1
+    container_name: ai4infra-vaultwarden
+    restart: unless-stopped
+    volumes:
+      - ${BASE_DIR}/vaultwarden/data:/data
+    environment:
+      - WEBSOCKET_ENABLED=true
+      - SIGNUPS_ALLOWED=false  # 보안상 가입 제한 (필요시 true로 변경 후 가입)
+      - INVITATIONS_ALLOWED=false
+      - SHOW_PASSWORD_HINT=false
+      # Postgres 연결 설정 (config/vaultwarden.env에서 주입됨)
+      - DATABASE_URL=${DATABASE_URL}
+    ports:
+      - "${PORT}:80"

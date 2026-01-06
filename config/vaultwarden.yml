@@ -1,0 +1,16 @@
+# Vaultwarden Configuration
+# Standard environment variables for the container
+
+env_vars:
+  # Web Vault Settings
+  - WEB_VAULT_ENABLED=true
+  - SIGNUPS_ALLOWED=false  # 회원가입 제한 (초기 관리자 생성시에만 true로 변경 권장)
+  - INVITATIONS_ALLOWED=false
+  - SHOW_PASSWORD_HINT=false
+  
+  # Logging
+  - LOG_LEVEL=warn
+  - EXTENDED_LOGGING=true
+
+compose_vars:
+  - PORT=8080      # Host Port (Reverse Proxy로 연결됨)

@@ -6,7 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from common.logger import log_debug, log_error, log_info
-from utils.container.bitwarden_installer import bitwarden_start
+
 
 
 load_dotenv()
@@ -42,7 +42,7 @@ def stop_container(search_pattern: str) -> bool:
     return True
 
 def copy_template(service: str) -> bool:
-    template_dir = f"{PROJECT_ROOT}/template/{service}"
+    template_dir = f"{PROJECT_ROOT}/templates/{service}"
     service_dir = f"{BASE_DIR}/{service}"
 
     try:
@@ -50,13 +50,7 @@ def copy_template(service: str) -> bool:
 
         exclude_args = []
 
-        # Bitwarden bwdata 제외
-        if service == "bitwarden":
-            exclude_args.extend([
-                '--exclude', 'bwdata/',
-                '--exclude', 'bwdata/**',
-                '--exclude', 'bwdata/*',
-            ])
+
 
         # Postgres override 제외
         if service == "postgres":
@@ -118,12 +112,9 @@ def ensure_network():
 def start_container(service: str):
     """단일 서비스 컨테이너 시작 - 디버깅 강화 버전"""
 
-    if service == "bitwarden":
-        bitwarden_start()
-        return
-    else:
-        service_dir = f"{BASE_DIR}/{service}"
-        compose_file = f"{service_dir}/docker-compose.yml"
+
+    service_dir = f"{BASE_DIR}/{service}"
+    compose_file = f"{service_dir}/docker-compose.yml"
     
         log_debug(f"[start_container] 구동시작: service_dir={service_dir}")
         log_debug(f"[start_container] compose_file={compose_file}")
