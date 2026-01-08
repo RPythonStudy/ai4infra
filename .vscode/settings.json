@@ -4,10 +4,7 @@
   "python.terminal.activateEnvironment": true,
   "terminal.integrated.inheritEnv": true,
 
-  // VS Code Python 확장 실험 기능 중 터미널 환경변수 활성화 비활성화
-  "python.experiments.optOutFrom": [
-    "pythonTerminalEnvVarActivation"
-  ],
+
 
   // R 실행 경로 고정 (rig로 설치된 기본 R)
   "r.rterm.linux": "/usr/local/bin/R",

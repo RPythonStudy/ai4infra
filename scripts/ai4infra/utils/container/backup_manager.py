@@ -18,8 +18,7 @@ load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv('BASE_DIR', '/opt/ai4infra')
 
-# 백업 암호화 키 (없으면 경고 후 암호화 건너뜀 또는 에러 처리)
-BACKUP_PASSWORD = os.getenv("BACKUP_PASSWORD")
+
 
 def _run_hook_postgres(service: str, backup_root: str) -> str:
     """Postgres 전용 백업 훅: pg_dump 실행"""
@@ -139,6 +138,9 @@ def backup_data(service: str, method_override: str = None) -> str:
     4. 임시 파일 삭제
     """
     
+    # [Fix] 전역변수 대신 함수 호출 시점에 환경변수 로드
+    BACKUP_PASSWORD = os.getenv("BACKUP_PASSWORD")
+
     if not BACKUP_PASSWORD:
         log_error("[backup_data] .env에 BACKUP_PASSWORD가 설정되지 않았습니다. 백업 중단.")
         return ""
@@ -237,6 +239,9 @@ def restore_data(service: str, backup_path: str) -> bool:
     """
     서비스 복원 (복호화 + 압축해제 + Hook/Copy)
     """
+    # [Fix] 전역변수 대신 함수 호출 시점에 환경변수 로드
+    BACKUP_PASSWORD = os.getenv("BACKUP_PASSWORD")
+
     if not BACKUP_PASSWORD:
         log_error("[restore_data] .env에 BACKUP_PASSWORD가 없습니다.")
         return False

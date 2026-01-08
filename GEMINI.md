@@ -44,13 +44,39 @@ print() 대신 반드시 아래의 전용 로거를 사용합니다. 로그 폴�
 - **간결성**: 극단적으로 직관적이고 디버깅하기 쉬운 코드를 우선 제안합니다.
 - **오류 대응**: 환경변수 누락, 권한 오류 등 예상되는 문제에 대해 에러 메시지 기반 수정 가이드를 주석이나 로그로 포함합니다.
 
+### 3.4 Container Naming Convention
+- **Prefix**: 모든 컨테이너 이름은 반드시 `ai4infra-` 접두사를 붙여야 합니다.
+- **Format**: `ai4infra-{service_name}` (예: `ai4infra-vault`, `ai4infra-postgres`)
+- **Reason**: 
+    - `stop_container` 등 관리 스크립트가 이름 기반으로 필터링(`filter name=ai4infra-{service}`)을 수행합니다.
+    - 동일 서버 내 다른 프로젝트 컨테이너와의 충돌을 방지합니다.
+
 ## 4. Project Structure (프로젝트 구조)
 프로젝트의 세부 아키텍처와 상세 설명은 `documentations/` 폴더 내의 각 markdown 파일을 참조하십시오.
 
-**주요 서비스 문서:**
-- [Security Architecture](documentations/security-architecture.md): 보안 원칙 및 운영 환경 전략.
-- [Vault Service Guide](documentations/vault.md): 보안 및 가명화 키 관리 서비스 정의 및 구축 가이드.
-- [Vaultwarden Service Guide](documentations/vaultwarden.md): 패스워드 매니저(Bitwarden 호환) 서비스 정의 및 선정 배경.
+**주요 서비스 문서 및 카테고리:**
+
+**1. Core Infrastructure (필수/기반)**
+- [Security Architecture](documentations/security-architecture.md): 보안 원칙 및 운영 전략.
+- [Nginx Service Guide](documentations/nginx.md): 통합 리버스 프록시 및 TLS Termination. (Gateway)
+- [PostgreSQL Service Guide](documentations/postgres.md): 공통 관계형 데이터베이스.
+- [Vault Service Guide](documentations/vault.md): 보안 키 및 시크릿 관리.
+
+**2. Application Services (선택)**
+- [Vaultwarden Service Guide](documentations/vaultwarden.md): 패스워드 매니저 (Vaultwarden).
+
+**3. Identity Management (선택 - SSO/계정)**
+- [OpenLDAP Guide](documentations/ldap.md): 중앙 계정 저장소 (Directory Service).
+- [Keycloak Guide](documentations/keycloak.md): 통합 인증 및 SSO 공급자 (IdP).
+
+**4. Observability (선택 - 로그/모니터링)**
+- [ELK Stack Guide](documentations/elk.md): 로그 수집 및 시각화 (Elasticsearch, Logstash, Kibana).
+- [Filebeat Guide](documentations/filebeat.md): 로그 수집 에이전트.
+
+**5. Medical & AI Data Ops (선택 - 의료/AI 특화)**
+- [HAPI FHIR Guide](documentations/fhir.md): 차세대 의료 데이터 표준(FHIR) 저장소.
+- [Orthanc Guide](documentations/orthanc.md): 의료 영상(DICOM) 저장 및 PACS 서버.
+- [MLflow Guide](documentations/mlflow.md): 의료 AI 모델 실험 추적 및 생명주기 관리.
 
 - `docs/`: Quarto 렌더링 결과물 (GitHub Pages 등 웹 게시용). **변경 불가(템플릿 표준)**.
 - `posts/`: 기술 블로그/문서화용 Quarto(.qmd) 소스 파일.
@@ -79,6 +105,10 @@ print() 대신 반드시 아래의 전용 로거를 사용합니다. 로그 폴�
         - `compose_vars`: `docker-compose.yml` 구성에 사용되는 치환용 변수 (예: `PORT`, `VAULT_MEM_LIMIT`).
     - **작동 원리**: 전용 스크립트가 위 설정들을 병합하여, 서비스 실행 시점에 해당 서비스 전용 `.env` 파일을 동적으로 생성합니다.
 
+4.  **네트워크 바인딩 (Network Binding)**:
+    - 컨테이너 내부의 서비스 Listen Address는 반드시 **와일드카드(`0.0.0.0`)**를 사용해야 합니다.
+    - `127.0.0.1`(Loopback) 사용 시 컨테이너 외부(Host 및 타 컨테이너)에서의 접근이 차단됩니다.
+
 ## 6. Automation & Workflow (자동화)
 `Makefile`을 통해 주요 작업을 자동화합니다. 새로운 기능을 추가할 때 가급적 Makefile 타겟이나 `scripts/` 내의 파이썬 스크립트로 모듈화하십시오.
 
@@ -86,11 +116,75 @@ print() 대신 반드시 아래의 전용 로거를 사용합니다. 로그 폴�
 - `make venv`: 가상환경 생성 및 패키지 설치.
 - `source .venv/bin/activate`: 가상환경 활성화 (Linux/Mac).
 
-## 6.1 Installation & Maintenance Standard (설치 및 유지보수 표준)
-- **Cold Backup Enforcement**: 서비스 설치(`install`) 또는 재설치(`--reset`) 시에는 데이터 정합성을 위해 예외 없이 **컨테이너를 먼저 중지(Stop)** 하고, **물리적 콜드 백업(Physical Cold Backup)** 을 수행합니다.
-- **Hot Backup**: 운영 중 주기적인 백업(`backup` 명령)은 서비스 특성에 따라 Hot Backup(Dump/Snapshot)을 허용합니다.
+## 6.2 Auto-Start Strategy (OS별 자동 구동 전략)
+> **목표**: 서버 부팅(또는 로그인) 시 Docker 컨테이너와 필수 서비스(Vault Unseal 등)를 사람의 개입 없이 자동으로 구동 완료 상태로 만듭니다.
+
+### A. Linux & Windows 11 (WSL2 w/ Systemd)
+**전제 조건**: `systemd`가 활성화되어 있어야 합니다. (`ps --no-headers -o comm 1` → `systemd`)
+
+1.  **Docker Container**: `restart: unless-stopped` 정책에 의해 Docker 서비스 구동 시 자동 복구됨. (별도 설정 불필요)
+2.  **Auto-Unseal Service**:
+    - **Service File**: `/etc/systemd/system/ai4infra-unseal.service` 등록.
+    - **Trigger**: `After=docker.service` (도커 구동 직후 실행).
+    - **Action**: `ai4infra-cli.py unseal-vault` 명령 실행 (Mock USB 등 키 파일 감지).
+
+### B. Windows 10 (Docker Desktop / Native)
+1.  **Docker Desktop 사용자 (일반적)**:
+    - **설정**: Settings > General > **Start Docker Desktop when you log in** 체크.
+    - **WSL Integration**: Settings > Resources > WSL Integration > 사용 중인 배포판(Ubuntu 등) **ON**.
+    - **결과**: 윈도우 로그인 시 컨테이너 자동 구동. (단, Unseal은 3번 스크립트로 처리)
+
+2.  **Native Docker 사용자 (WSL2 Custom)**:
+    - **sudoers**: `/etc/sudoers`에 `NOPASSWD: /usr/sbin/service docker start` 추가.
+    - **Start Script**: 윈도우 `shell:startup` 폴더에 `start_docker.bat` 배치 파일 생성.
+    - **내용**: `wsl -d Ubuntu -u root service docker start`
+
+3.  **Auto-Unseal (Windows 공통)**:
+    - `shell:startup` 폴더에 `auto_unseal.bat` 생성.
+    - 내용: `wsl -d Ubuntu -u ben /path/to/venv/python /path/to/ai4infra-cli.py unseal-vault`
+- **Restore Strategy**: `stop` -> `template check` -> `restore(overwrite)` -> `permission fix` -> `start`
+
+
+## 6.2 Windows 10 Auto-Start Strategy (Native Docker without Desktop)
+> **대상**: Windows 10 사용자 (표준 사용자 계정) / Docker Desktop 미사용(라이선스/성능 이슈).
+> **목표**: 윈도우 부팅(로그인) 시 WSL2 내부의 Docker 데몬과 컨테이너들을 자동으로 깨웁니다.
+
+1.  **WSL2 sudoers 설정** (비밀번호 없이 서비스 실행 허용):
+    - `sudo visudo` 명령으로 `/etc/sudoers` 편집.
+    - `%sudo ALL=(ALL) NOPASSWD: /usr/sbin/service docker start` 추가.
+
+2.  **Windows Startup Script**:
+    - `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup` 폴더에 `start_docker.bat` 생성.
+    - 내용:
+      ```batch
+      @echo off
+      wsl -d Ubuntu -u root service docker start
+      timeout /t 5
+      ```
+
+### 6.2.1 Service Specific Strategy
+- **Postgres (2-Step Initialization)**:
+    - **Concept**: 초기 구동 시 `certificate` 유무에 따른 Crash를 방지하기 위해 2단계로 설치합니다.
+    - **Step 1**: `docker-compose.override.yml`(TLS 설정)을 **제외**하고 기본 템플릿만 복사하여 구동 (DB 초기화 및 볼륨 생성).
+    - **Step 2**: 인증서 발급 및 권한 설정 후, `override` 파일을 추가 복사하고 재기동하여 TLS 적용.
 
 ## 7. Security & Vault Strategy (보안 및 볼트 전략)
+
+### 7.1 TLS Implementation Strategy (TLS 적용 기준)
+모든 서비스는 mTLS(상호 인증) 또는 TLS 암호화를 지향하지만, **컨테이너의 구동 특성**에 따라 적용 시점을 달리합니다.
+
+1.  **Native TLS Support (One-Shot)** (예: Vault)
+    -   설정 파일(`config.hcl`)을 통해 인증서 경로를 지정하며, **최초 구동 시** 인증서가 존재하면 즉시 TLS 모드로 시작 가능합니다.
+    -   **전략**: 템플릿 복사 후 `start` 전에 인증서를 생성/배치하여 **One-Shot 구동**.
+
+2.  **Strict Permission Requirement (2-Step)** (예: Postgres)
+    -   데이터 디렉터리(`/var/lib/postgresql/data`) 및 사용자(`postgres`)가 생성되기 전에는 인증서에 올바른 권한(`chown postgres:postgres`)을 부여할 수 없습니다.
+    -   **전략**: **2-Step Initialization** (평문 구동 → 사용자/폴더 생성 → 인증서 권한 설정 → TLS 모드 재기동).
+
+3.  **Reverse Proxy / Termination** (예: Web Apps)
+    -   Nginx 등이 앞단에서 TLS를 처리하고 내부 통신은 평문을 사용하는 경우.
+    -   **전략**: 컨테이너는 평문으로 유지하고 `docker-compose` 네트워크 내부 통신만 허용.
+
 본 프로젝트는 보안성과 개발 편의성(잦은 재부팅)의 균형을 위해 **"Smart Key (USB + Server File)"** 전략을 사용합니다.
 
 ### 7.1 Strategy Overview (Smart Key)

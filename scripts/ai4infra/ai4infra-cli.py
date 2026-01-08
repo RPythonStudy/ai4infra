@@ -4,6 +4,7 @@
 import os
 import re
 import subprocess
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -71,43 +72,25 @@ def generate_rootca():
 @app.command()
 def install(
     service: str = typer.Argument("all", help="설치할 서비스 이름"),
-    reset: bool = typer.Option(False, "--reset", help="기존 데이터/컨테이너 삭제 후 완전 재설치 (개발용)"),
-    backup: bool = typer.Option(False, "--backup", help="데이터 백업 → 서비스 폴더 삭제 → 설치 → 데이터 복원")
+    reset: bool = typer.Option(False, "--reset", help="기존 데이터/컨테이너 삭제 후 완전 재설치 (개발용)")
 ):
     
     # discover_services() 함수로 서비스 목록을 가져옴
     services = list(discover_services()) if service == "all" else [service]
     for svc in services:
         service_dir = f"{BASE_DIR}/{svc}"
-        backup_path = None
 
-        # [Policy] 설치 시에는 항상 먼저 중지 (Cold Backup Enforcement)
         # 1) 컨테이너 중지
         stop_container(f"ai4infra-{svc}")
 
         # 2) 데이터 처리
-        if backup:
-            log_info(f"[install] --backup 모드: {svc} Cold Backup(Physical) 시작")
-            
-            # 컨테이너가 꺼져 있으므로 "copy" 방식 강제
-            backup_path = backup_data(svc, method_override="copy")
-            
-            if not backup_path:
-                log_error(f"[install] {svc} 백업 실패 → 설치 중단")
-                continue
-            
-            log_info(f"[install] 데이터백업 완료 → {backup_path}")
-            log_info(f"[install] {svc} 서비스폴더 삭제진행")
-            subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
-            log_info(f"[install] {service_dir} 삭제 완료")
-
-        elif reset:
+        if reset:
             log_info(f"[install] --reset 모드: {svc} 서비스폴더 삭제진행")
             subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
             log_info(f"[install] {service_dir} 삭제 완료")
 
         else:
-            # 멱등성 모드 (stop_container는 위에서 이미 호출됨)
+            # 멱등성 모드
             log_info(f"[install] 옵션 없음 = 멱등성 모드: {svc} 기존 데이터∙설정 유지")
 
         # 3) 템플릿 복사
@@ -116,24 +99,15 @@ def install(
         # 4) 서비스별 권한 설정 (복사 직후 실행)
         apply_service_permissions(svc)
 
-        # 5) (구 Bitwarden 수동 설치 로직 제거됨)
-
-
-        # 6) 서비스별 인증서 생성 (Bitwarden 설치 완료 후)
+        # 5) 서비스별 인증서 생성 (Bitwarden 설치 완료 후)
         create_service_certificate(service=svc, san=None)
 
-        # 7) --backup 모드: 데이터 복원
-        if backup and backup_path:
-            if not restore_data(svc, backup_path):
-                log_error(f"[install] {svc} 데이터 복원 실패")
-                continue
-
-        # 8) 환경파일 생성 (.env)
+        # 6) 환경파일 생성 (.env)
         env_path = generate_env(svc)
         if not env_path:
             log_info(f"[install] {svc}: .env 생성 생략")
 
-        # 9) 컨테이너 시작
+        # 7) 컨테이너 시작
         start_container(svc)
 
         # -----------------------------
@@ -193,23 +167,18 @@ def backup(service: str = typer.Argument(..., help="백업할 서비스 (postgre
 
     for svc in services:
         
-        # 서비스별 백업 방식 결정 (Hot vs Cold)
-        is_hot_backup = is_hot_backup_service(svc)
+        # [Policy] Cold Backup Enforcement (GEMINI.md 참조)
+        # Hot/Cold 구분 없이 무조건 중지하여 정합성 보장
+        stop_container(f"ai4infra-{svc}")
 
-        # 1) Cold Backup인 경우에만 먼저 중지
-        if not is_hot_backup:
-            stop_container(f"ai4infra-{svc}")
-
-        # 2) 백업 수행
-        backup_file = backup_data(svc)
-        if backup_file:
-            backup_files.append(backup_file)
-
-        # 3) 상태 복구 (Hot: 유지 / Cold: 재시작)
-        if not is_hot_backup:
+        try:
+            # 2) 백업 수행
+            backup_file = backup_data(svc)
+            if backup_file:
+                backup_files.append(backup_file)
+        finally:
+            # 3) 반드시 재시작 (백업 성공/실패 여부와 관계없이)
             start_container(svc)
-        else:
-            log_info(f"[backup] {svc}: Hot Backup 완료 (컨테이너 유지됨)")
 
     if backup_files:
         log_info(f"[backup] {len(backup_files)}개 백업 완료")
@@ -278,6 +247,14 @@ def restore(
     else:
         log_info(f"[restore] {service}: .env 생성 생략")
 
+    # [Safe Guard] docker-compose.yml 누락 감지 (예: 오래된 백업 복원 시)
+    service_dir = f"{BASE_DIR}/{service}"
+    if not os.path.exists(f"{service_dir}/docker-compose.yml"):
+        log_info(f"[restore] docker-compose.yml 누락 감지 → 템플릿 복사 수행")
+        copy_template(service)
+        # 템플릿 복사 후 권한 재설정
+        apply_service_permissions(service)
+
     # 6) 컨테이너 재시작
     start_container(service)
     log_info(f"[restore] {service} 복원 완료")
@@ -324,9 +301,12 @@ def init_vault():
     print(" Vault operator init 결과(JSON)가 곧 화면에 그대로 출력됩니다.")
     print("-------------------------------------------------------------------\n")
 
-    # 3) Vault init 실행 (출력을 캡처하지 않음 → 그대로 사용자 터미널로 출력됨)
+    # 3) Vault init 실행
+    # 3) Vault init 실행
     init_cmd = [
-        'sudo', 'docker', 'exec', '-i', 'ai4infra-vault',
+        'sudo', 'docker', 'exec', '-i', 
+        '-e', 'VAULT_ADDR=https://127.0.0.1:8200',  # [Fix] TLS 인증서 IP 불일치 해결
+        'ai4infra-vault',
         'vault', 'operator', 'init',
         '-key-shares=5',
         '-key-threshold=3',
@@ -334,11 +314,31 @@ def init_vault():
     ]
 
     try:
-        # stdout/stderr을 캡처하지 않으므로 Vault의 출력이 그대로 화면에 표시됨
-        subprocess.run(init_cmd, check=True)
-
+        # JSON 캡처
+        result = subprocess.run(init_cmd, capture_output=True, text=True, check=True)
+        init_json = result.stdout
+        
+        # [Dev Simulation] Mock USB 저장
+        mock_usb_dir = f"{PROJECT_ROOT}/mock_usb"
+        os.makedirs(mock_usb_dir, exist_ok=True)
+        key_file_path = f"{mock_usb_dir}/vault_keys.json"
+        
+        with open(key_file_path, "w") as f:
+            f.write(init_json)
+            
+        # 사용자 출력
         print("\n-------------------------------------------------------------------")
         print(" 초기화가 정상적으로 완료되었습니다.")
+        print(f" [SIMULATION] Key가 가상 USB에 저장되었습니다: {key_file_path}")
+        print(" 이 파일은 .gitignore에 등록되어 버전 관리에서 제외됩니다.")
+        print(" unseal-vault 실행 시 자동으로 감지되어 처리됩니다.")
+        print("-------------------------------------------------------------------")
+        
+        # 보안상 화면 출력은 최소화 (필요시 주석 해제)
+        # print("\n--- Init Output (JSON) ---\n")
+        # print(init_json)
+        # print("\n--------------------------\n")
+        
         print(" 다음 단계:")
         print("   ai4infra unseal-vault")
         print("-------------------------------------------------------------------\n")
@@ -357,14 +357,15 @@ def unseal_vault():
     log_info("[unseal_vault] Vault 언씰 절차 시작")
 
     status_cmd = [
-        'sudo', 'docker', 'exec', 'ai4infra-vault',
+        'sudo', 'docker', 'exec', 
+        '-e', 'VAULT_ADDR=https://127.0.0.1:8200',  # [Fix] TLS 인증서 IP 불일치 해결
+        'ai4infra-vault',
         'vault', 'status', '-format=json'
     ]
 
     # 1) Vault 상태 확인
     try:
         result = subprocess.run(status_cmd, capture_output=True, text=True, check=True)
-        import json
         status_json = json.loads(result.stdout)
         initialized = status_json.get("initialized", False)
         sealed = status_json.get("sealed", True)
@@ -387,9 +388,53 @@ def unseal_vault():
         print("Vault UI: https://localhost:8200")
         return
 
+    # [Dev Simulation] Mock USB 자동 언실 시도
+    mock_usb_key_path = f"{PROJECT_ROOT}/mock_usb/vault_keys.json"
+    
+    if os.path.exists(mock_usb_key_path):
+        log_info(f"[unseal_vault] 가상 USB 키 감지됨: {mock_usb_key_path}")
+        try:
+            with open(mock_usb_key_path, "r") as f:
+                keys_data = json.load(f)
+                unseal_keys = keys_data.get("unseal_keys_b64", [])
+            
+            if not unseal_keys:
+                log_error("[unseal_vault] 키 파일에 unseal_keys_b64가 없습니다.")
+            else:
+                log_info(f"[unseal_vault] 자동 언실 시작 (Threshold: {threshold})")
+                
+                success_count = 0
+                for i, key in enumerate(unseal_keys[:threshold]):
+                    log_info(f"[unseal_vault] Key #{i+1} 입력 중...")
+                    cmd = [
+                        'sudo', 'docker', 'exec', 
+                        '-e', 'VAULT_ADDR=https://127.0.0.1:8200',  # [Fix] TLS 인증서 IP 불일치 해결
+                        'ai4infra-vault',
+                        'vault', 'operator', 'unseal', key
+                    ]
+                    res = subprocess.run(cmd, capture_output=True, text=True)
+                    if res.returncode == 0:
+                        success_count += 1
+                    else:
+                        log_error(f"[unseal_vault] Key #{i+1} 실패: {res.stderr}")
+                
+                if success_count >= threshold:
+                    log_info("[unseal_vault] 자동 언실 성공!")
+                    print("Vault UI: https://localhost:8200")
+                    return
+                else:
+                    log_error(f"[unseal_vault] 자동 언실 실패 (성공: {success_count}/{threshold})")
+                    
+        except Exception as e:
+            log_error(f"[unseal_vault] 키 파일 읽기 오류: {e}")
+            
+    # -------------------------------------------------------------
+    # 수동 모드 (USB 없음)
+    # -------------------------------------------------------------
     print("\n===================================================================")
     print(" Vault 언실(Unseal) 절차 안내 (수동 방식)")
     print("===================================================================\n")
+    print(" * 가상 USB 키 파일(mock_usb/vault_keys.json)을 찾을 수 없습니다.\n")
 
     print("Vault는 보안상의 이유로 sealed 상태로 시작합니다.")
     print(f"이 Vault는 총 {threshold}개의 Unseal Key 중 최소 {threshold}개가 필요합니다.\n")
@@ -420,7 +465,7 @@ def unseal_vault():
     print("   https://localhost:8200")
     print("-------------------------------------------------------------------\n")
 
-    log_info("[unseal_vault] 사용자에게 Vault 언실 명령 실행 안내 완료")
+    log_info("[unseal_vault] 사용자에게 Vault 언실 명령 실행 안내 (수동)")
 
 @app.command()
 def install_rootca_windows():
@@ -436,4 +481,3 @@ if __name__ == "__main__":
     except Exception as e:
         log_error(str(e))
         sys.exit(1)
-        s

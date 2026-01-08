@@ -53,6 +53,9 @@ def copy_template(service: str) -> bool:
 
 
         # Postgres override 제외
+        # 이유: 2-Step Initialization (GEMINI.md 참조)
+        #       - 1단계: 기본 템플릿만으로 DB 초기화 및 볼륨 생성 (이때 override가 있으면 인증서 부재로 crash)
+        #       - 2단계: 인증서 발급 후 override 파일 수동 복사하여 TLS 적용 재기동
         if service == "postgres":
             exclude_args.extend([
                 '--exclude', 'docker-compose.override.yml',
@@ -60,9 +63,12 @@ def copy_template(service: str) -> bool:
 
         dry_cmd = [
             'sudo', 'rsync',
-            '-a', '-i',
-            '--no-t', '--no-o', '--no-g',
-            '--dry-run'
+            '-a',       # Archive 모드 (권한/속성 등 유지)
+            '-i',       # Itemize (변경 내역 상세 출력)
+            '--no-t',   # Time: 수정 시간 변경은 무시 (실질적 내용 변경만 감지)
+            '--no-o',   # Owner: 소유자 변경 안 함 (타겟 폴더 권한 존중)
+            '--no-g',   # Group: 그룹 변경 안 함
+            '--dry-run' # 실제 실행 안 함 (시뮬레이션)
         ] + exclude_args + [
             f"{template_dir}/",
             f"{service_dir}/"
@@ -79,8 +85,10 @@ def copy_template(service: str) -> bool:
 
         real_cmd = [
             'sudo', 'rsync',
-            '-a',
-            '--no-t', '--no-o', '--no-g'
+            '-a',       # Archive 모드
+            '--no-t',   # Time 변경 무시
+            '--no-o',   # Owner 변경 무시 (기존 권한 유지)
+            '--no-g'    # Group 변경 무시
         ] + exclude_args + [
             f"{template_dir}/",
             f"{service_dir}/"
@@ -116,29 +124,29 @@ def start_container(service: str):
     service_dir = f"{BASE_DIR}/{service}"
     compose_file = f"{service_dir}/docker-compose.yml"
     
-        log_debug(f"[start_container] 구동시작: service_dir={service_dir}")
-        log_debug(f"[start_container] compose_file={compose_file}")
-    
-        if not os.path.exists(compose_file):
-            log_error(f"[start_container] {service} docker-compose.yml 없음: {compose_file}")
-            return
-    
-        ensure_network()
-    
-        cmd = ['sudo', 'ls', '-l', compose_file]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        log_debug(f"[start_container] 파일 권한: {result.stdout.strip()}")
-    
-        cmd = ['sudo', 'docker', 'compose', '-f', compose_file, 'up', '-d']
-        log_debug(f"[start_container] 실행 명령: {' '.join(cmd)}")
-        log_debug(f"[start_container] 작업 디렉터리: {service_dir}")
-    
-        result = subprocess.run(cmd, cwd=service_dir, capture_output=True, text=True)
-        log_debug(f"[start_container] 반환코드: {result.returncode}")
-    
-        if result.returncode == 0:
-            log_info(f"[start_container] {service} 컨테이너 시작됨")
-        else:
-            log_error(f"[start_container] {service} 시작 실패")
-            log_error(f"[start_container] 오류 내용: {result.stderr}")
-            log_error(f"[start_container] 출력 내용: {result.stdout}")
+    log_debug(f"[start_container] 구동시작: service_dir={service_dir}")
+    log_debug(f"[start_container] compose_file={compose_file}")
+
+    if not os.path.exists(compose_file):
+        log_error(f"[start_container] {service} docker-compose.yml 없음: {compose_file}")
+        return
+
+    ensure_network()
+
+    cmd = ['sudo', 'ls', '-l', compose_file]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    log_debug(f"[start_container] 파일 권한: {result.stdout.strip()}")
+
+    cmd = ['sudo', 'docker', 'compose', '-f', compose_file, 'up', '-d']
+    log_debug(f"[start_container] 실행 명령: {' '.join(cmd)}")
+    log_debug(f"[start_container] 작업 디렉터리: {service_dir}")
+
+    result = subprocess.run(cmd, cwd=service_dir, capture_output=True, text=True)
+    log_debug(f"[start_container] 반환코드: {result.returncode}")
+
+    if result.returncode == 0:
+        log_info(f"[start_container] {service} 컨테이너 시작됨")
+    else:
+        log_error(f"[start_container] {service} 시작 실패")
+        log_error(f"[start_container] 오류 내용: {result.stderr}")
+        log_error(f"[start_container] 출력 내용: {result.stdout}")

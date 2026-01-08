@@ -1,5 +1,5 @@
 # Vault 프로덕션 설정 파일
-# 파일명: template/vault/config/vault.hcl
+# 파일명: templates/vault/config/vault.hcl
 
 # 스토리지 백엔드 - 파일 기반
 storage "file" {

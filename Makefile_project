@@ -2,16 +2,13 @@ generate-rootca:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py generate-rootca
 
 create-user:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py create-bitwarden-user	
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py create-bitwarden-user
 
 install-bitwarden:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install bitwarden
 
 install-bitwarden--reset:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install bitwarden --reset
-
-install-bitwarden--backup:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install bitwarden --backup	
 
 backup-bitwarden:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py backup bitwarden
@@ -24,9 +21,6 @@ install-postgres:
 
 install-postgres--reset:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres --reset
-
-install-postgres--backup:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres --backup
 
 
 install-vault:
@@ -49,4 +43,3 @@ restore-vault:
 
 install-all:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install all
-

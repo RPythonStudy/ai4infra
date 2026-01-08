@@ -21,7 +21,7 @@ def encrypt_file(input_file: str, output_file: str, passphrase: str) -> bool:
     # --symmetric: 대칭키 암호화
     # --cipher-algo AES256: 강력한 알고리즘 지정
     cmd = [
-        'gpg', '--batch', '--yes',
+        'sudo', 'gpg', '--batch', '--yes',
         '--passphrase-fd', '0',
         '--symmetric',
         '--cipher-algo', 'AES256',
@@ -55,7 +55,7 @@ def decrypt_file(input_file: str, output_file: str, passphrase: str) -> bool:
         return False
 
     cmd = [
-        'gpg', '--batch', '--yes',
+        'sudo', 'gpg', '--batch', '--yes',
         '--passphrase-fd', '0',
         '--decrypt',
         '--output', output_file,
