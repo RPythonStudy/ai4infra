@@ -181,9 +181,28 @@ sequenceDiagram
 
 ---
 
-## 6. Troubleshooting
-- **원인**: Entrypoint 스크립트가 환경변수를 제대로 치환하지 못했음.
-- **해결**: `.env` 파일이 올바르게 로드되었는지, `config/orthanc.yml`의 `env_vars`에 해당 변수(`ORTHANC_DB_PASSWORD`)가 선언되어 있는지 확인.
+## 7. dcmtk (Infrastructure Service)
+
+> **Container**: `ai4infra-dcmtk:latest` (DCMTK 도구 세트)
+
+연구 자동화 및 데이터 이동을 위해 DCMTK 도구가 설치된 독립 컨테이너를 제공합니다.
+
+### 🚀 Installation
+```bash
+python scripts/ai4infra/ai4infra-cli.py install dcmtk
+```
+
+### 📖 Usage
+- **Example Scripts**: `/examples/` 폴더에 기본 연동 스크립트가 포함되어 있습니다.
+- **Custom Scripts**: `workspace/` 폴더에 자체 스크립트를 작성하여 실행할 수 있습니다.
+
+상세 내용은 `templates/dcmtk/README.md`를 참조하십시오.
+
+---
+
+## 8. Troubleshooting
+- **`502 Bad Gateway`**: Orthanc 컨테이너는 떴으나 내부 서비스(8042 포트)가 아직 준비되지 않았을 수 있습니다. 약 10~30초 후 다시 시도하십시오.
+- **`fe_sendauth: no password supplied`**: Entrypoint 스크립트가 환경변수를 제대로 치환하지 못했음. `.env` 파일이 올바르게 로드되었는지 확인.
 
 ### `Plugin ... No available configuration`
 - **원인**: `orthanc.json`에서 `Plugins` 경로 리스트가 누락됨.

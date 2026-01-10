@@ -1,0 +1,23 @@
+services:
+  dcmtk:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai4infra-dcmtk:latest
+    container_name: ai4infra-dcmtk
+    hostname: dcmtk
+    networks:
+      - ai4infra
+    volumes:
+      # 응용 서비스에서 스크립트를 마운트할 수 있는 작업 공간
+      - ${WORKSPACE_PATH:-./workspace}:/workspace
+      # Example scripts (읽기 전용)
+      - ./examples:/examples:ro
+    restart: unless-stopped
+    # Keep container running for exec commands
+    command: tail -f /dev/null
+
+networks:
+  ai4infra:
+    external: true
+    name: ai4infra
