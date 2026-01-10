@@ -15,7 +15,7 @@ import typer
 from dotenv import load_dotenv
 
 # Local imports
-from common.logger import log_debug, log_error, log_info
+from common.logger import log_debug, log_error, log_info, log_warn
 
 # base manager
 from utils.container.base_manager import stop_container
@@ -90,15 +90,25 @@ def _ensure_postgres_db(db_name="keycloak", db_user="keycloak", env_password_key
     log_info(f"[_ensure_postgres_db] {db_name} DB 생성 시작...")
     pw = os.getenv(env_password_key, db_user)
     
+    # 3-1. User 생성 (이미 존재할 수 있음 -> 에러 무시)
+    cmd_user = [
+        "sudo", "docker", "exec", "ai4infra-postgres",
+        "psql", "-U", "postgres", "-c", f"CREATE USER {db_user} WITH PASSWORD '{pw}';"
+    ]
+    try:
+        subprocess.run(cmd_user, check=True, capture_output=True)
+    except subprocess.CalledProcessError:
+        # 이미 존재하는 경우 등은 경고 후 진행
+        log_warn(f"[_ensure_postgres_db] 사용자({db_user}) 생성 스킵 (이미 존재 가능성)")
+
+    # 3-2. DB 생성 및 권한 부여
     create_cmds = [
-        f"CREATE USER {db_user} WITH PASSWORD '{pw}';",
         f"CREATE DATABASE {db_name};",
         f"GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {db_user};",
         f"ALTER DATABASE {db_name} OWNER TO {db_user};"
     ]
     
     for sql in create_cmds:
-        # 비밀번호 노출 방지를 위해 로그는 생략하거나 마스킹 필요 (여기선 생략)
         cmd = [
             "sudo", "docker", "exec", "ai4infra-postgres",
             "psql", "-U", "postgres", "-c", sql
@@ -106,7 +116,14 @@ def _ensure_postgres_db(db_name="keycloak", db_user="keycloak", env_password_key
         try:
             subprocess.run(cmd, check=True, capture_output=True)
         except subprocess.CalledProcessError as e:
-            log_error(f"[_ensure_postgres_db] SQL 실행 실패: {sql.split('WITH')[0]}...") # PW 마스킹
+            # DB 이미 존재함은 위에서 체크했으므로, 여기서 에러나면 진짜 문제임.
+            # 단, CREATE DATABASE는 Transaction Block 안에서 실행 불가라 가끔 까다로움.
+            stderr = e.stderr.decode() if e.stderr else ""
+            if "already exists" in stderr:
+                 log_warn(f"[_ensure_postgres_db] {db_name} 이미 존재 (진행)")
+                 continue
+            
+            log_error(f"[_ensure_postgres_db] SQL 실행 실패: {sql}... ({stderr})")
             return
 
     log_info(f"[_ensure_postgres_db] {db_name} DB 및 User 생성 완료")
@@ -126,9 +143,12 @@ def install(
         # [Keycloak 전처리] DB 준비
         if svc == "keycloak":
              _ensure_postgres_db(db_name="keycloak", db_user="keycloak", env_password_key="KEYCLOAK_DB_PASSWORD")
-        # [Orthanc 전처리] DB 준비
-        elif svc == "orthanc":
-             _ensure_postgres_db(db_name="orthanc", db_user="orthanc", env_password_key="ORTHANC_DB_PASSWORD")
+        # [Orthanc Family 전처리] DB 준비 (orthanc, orthanc-mock, orthanc-research...)
+        elif svc.startswith("orthanc"):
+             # 예: "orthanc-mock" -> "orthanc_mock"
+             db_name = svc.replace("-", "_")
+             # User는 공통 "orthanc" 사용
+             _ensure_postgres_db(db_name=db_name, db_user="orthanc", env_password_key="ORTHANC_DB_PASSWORD")
 
         # 1) 컨테이너 중지
         stop_container(f"ai4infra-{svc}")
@@ -171,7 +191,7 @@ def install(
             
             log_info(f"[install] {svc} 반영을 위해 Nginx 재시작...")
             subprocess.run(["sudo", "docker", "restart", "ai4infra-nginx"], check=False)
-        elif svc in ["keycloak", "orthanc"] and check_container("nginx"):
+        elif (svc == "keycloak" or svc.startswith("orthanc")) and check_container("nginx"):
              # 설정 파일이 없더라도 강제 리로드 필요 시 (예: 기존 파일 수정)
              log_info(f"[install] {svc} 반영을 위해 Nginx 재시작...")
              subprocess.run(["sudo", "docker", "restart", "ai4infra-nginx"], check=False)
