@@ -13,15 +13,15 @@ listener "tcp" {
   tls_key_file  = "/vault/certs/private.key"
 }
 
-# API 주소
-api_addr = "https://vault:8200"
-cluster_addr = "https://vault:8201"
+# API 주소 (환경변수 VAULT_API_ADDR, VAULT_CLUSTER_ADDR 사용을 위해 주석 처리)
+# api_addr = "https://vault:8200"
+# cluster_addr = "https://vault:8201"
 
 # UI 활성화
 ui = true
 
-# 로그 레벨
+# 로그 레벨 (선택: "TRACE", "DEBUG", "INFO", "WARN", "ERROR")
 log_level = "INFO"
 
-# mlock 비활성화 (Docker 환경용)
-disable_mlock = true
+# mlock 활성화 (Docker cap_add: IPC_LOCK 필요)
+disable_mlock = false

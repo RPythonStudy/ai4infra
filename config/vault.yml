@@ -34,6 +34,10 @@
 service:
   enable: true
 
+backup:
+  schedule: "0 4 * * *" # Daily 04:00 (Hot Backup)
+  retention_days: 30    # Keep backups for 30 days
+
 env_vars:
   VAULT_ADDR: "https://0.0.0.0:8200"
   VAULT_API_ADDR: "https://vault:8200"

@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """
 파일명: scripts/ai4infra/utils/certs_manager.py
-
 AI4INFRA 인증서 관리 모듈 (리팩터링 버전)
-
 주요 기능:
   1. Root CA 생성 및 검증
   2. 서비스별 서버 인증서 생성 (key → csr → crt)
   3. 서비스 인증서의 CA chain 검증
-  4. Root CA를 서비스 디렉터리로 복사 (rootCA.crt / ca.crt)
-
+  4. Root CA를 서비스 디렉터리로 복사 (rootCA.crt)
 설계 원칙:
   - 각 함수는 단일 책임(SRP)을 유지한다.
   - 상위 함수(create_service_certificate)는 하위 단계를 orchestration 한다.
@@ -19,13 +16,12 @@ AI4INFRA 인증서 관리 모듈 (리팩터링 버전)
     * private.key
     * certificate.crt
   - Root CA 원본은 BASE_DIR/certs/ca/rootCA.pem 을 기준으로 관리하고,
-    각 서비스 디렉터리에는 복사본(rootCA.crt 또는 ca.crt)만 둔다.
-
+    각 서비스 디렉터리에는 복사본(rootCA.crt)만 둔다.
 변경이력:
-  - 2025-11-19: 최초 구현 시작 (BenKorea)
-  - 2025-11-20: 구조 개선, SAN 기본값 추가, Bitwarden 경로 반영
-  - 2025-11-20: 서비스별 파일명 통일(private.key/certificate.crt),
-                Root CA 전역 보존(rootCA.pem) + 서비스별 복사로 정리
+  - 2025-11-19: 최초 구현 시작
+  - 2025-11-20: 구조 개선, SAN 기본값 추가
+  - 2025-11-20: 서비스별 파일명 통일(private.key/certificate.crt)
+  - 2026-01-10: Bitwarden 제거 및 Vaultwarden/Nginx 지원 (간결화)
 """
 
 # Standard library imports
@@ -45,14 +41,12 @@ from common.sudo_helpers import sudo_exists, sudo_find_files
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
 BASE_DIR = os.getenv("BASE_DIR", "/opt/ai4infra")
-BITWARDEN_DOMAIN = "bitwarden.ai4infra.internal"
 CA_DIR = Path(f"{BASE_DIR}/certs/ca")
 CA_KEY = CA_DIR / "rootCA.key"
 CA_CERT = CA_DIR / "rootCA.pem"  # 전역 Root CA 인증서 (PEM)
 
 
 def create_root_ca(overwrite: bool = False) -> bool:
-    
     try:
         if CA_CERT.exists() and CA_KEY.exists() and not overwrite:
             log_info(f"[create_root_ca] Root CA 이미 존재: {CA_CERT}")
@@ -98,7 +92,6 @@ def create_root_ca(overwrite: bool = False) -> bool:
         return False
 
 def verify_root_ca() -> bool:
-  
     if not CA_CERT.exists():
         log_warn("[verify_root_ca] Root CA 인증서가 존재하지 않습니다.")
         return False
@@ -135,7 +128,6 @@ def generate_root_ca_if_needed() -> bool:
     return create_root_ca(overwrite=False)
 
 def get_service_cert_paths(service: str) -> tuple[Path, Path, Path]:
-
     base = Path(BASE_DIR) / service / "certs"
     key_path = base / "private.key"
     csr_path = base / "request.csr"
@@ -145,7 +137,6 @@ def get_service_cert_paths(service: str) -> tuple[Path, Path, Path]:
 def build_default_san(service: str) -> str:
     """
     서비스 이름을 기반으로 기본 SubjectAltName 문자열을 구성
-
     예) postgres → DNS:postgres,DNS:ai4infra-postgres,IP:127.0.0.1
     """
     dns_entries = [
@@ -215,15 +206,9 @@ def sign_service_cert_with_ca(
     service: str,
     csr_path: Path,
     cert_path: Path,
-    san: str,
-) -> bool:
+    san: str,) -> bool:
     """
     CSR을 Root CA로 서명하여 서버 인증서 생성
-
-    Parameters
-    ----------
-    san : str
-        SubjectAltName 문자열 (예: "DNS:...,IP:127.0.0.1")
     """
     try:
         cert_dir = cert_path.parent
@@ -308,19 +293,12 @@ def verify_service_cert(service: str, cert_path: Path) -> bool:
 def deploy_root_ca_to_service(service: str, ca_src: Path) -> bool:
     """
     서비스 디렉터리 내부 certs/에 Root CA 복사
-
     - 기본 파일명: rootCA.crt
-    - Bitwarden 의 경우: bwdata/ssl/<domain>/ca.crt
     """
     try:
-        if service == "bitwarden":
-            ssl_dir = Path(BASE_DIR) / "bitwarden" / "bwdata" / "ssl" / BITWARDEN_DOMAIN
-            subprocess.run(["sudo", "mkdir", "-p", str(ssl_dir)], check=True)
-            dst = ssl_dir / "ca.crt"
-        else:
-            cert_dir = Path(BASE_DIR) / service / "certs"
-            subprocess.run(["sudo", "mkdir", "-p", str(cert_dir)], check=True)
-            dst = cert_dir / "rootCA.crt"
+        cert_dir = Path(BASE_DIR) / service / "certs"
+        subprocess.run(["sudo", "mkdir", "-p", str(cert_dir)], check=True)
+        dst = cert_dir / "rootCA.crt"
 
         subprocess.run(
             ["sudo", "cp", "-a", str(ca_src), str(dst)],
@@ -335,54 +313,9 @@ def deploy_root_ca_to_service(service: str, ca_src: Path) -> bool:
         log_error(f"[deploy_root_ca_to_service] 예외 발생: {e}")
         return False
 
-def fix_bitwarden_cert_permissions() -> None:
-    """
-    Bitwarden SSL 디렉터리 권한 정리
-
-    - private.key: 600
-    - certificate.crt, ca.crt: 644
-
-    소유자/그룹(uid/gid)은 apply_service_permissions()에서
-    config/bitwarden.yml의 permissions 설정을 기준으로 일괄 관리한다.
-    """
-    ssl_dir = Path(BASE_DIR) / "bitwarden" / "bwdata" / "ssl" / BITWARDEN_DOMAIN
-
-    if not sudo_exists(ssl_dir):
-        log_warn(
-            f"[fix_bitwarden_cert_permissions] Bitwarden ssl 디렉터리가 없습니다: {ssl_dir}"
-        )
-        return
-
-    try:
-        # private key
-        key_path = ssl_dir / "private.key"
-        if sudo_exists(key_path):
-            subprocess.run(
-                ["sudo", "chmod", "600", str(key_path)],
-                check=False,
-            )
-
-        # server cert / CA cert
-        cert_paths = [ssl_dir / "certificate.crt", ssl_dir / "ca.crt"]
-        for path in cert_paths:
-            if sudo_exists(path):
-                subprocess.run(
-                    ["sudo", "chmod", "644", str(path)],
-                    check=False,
-                )
-
-        log_info("[fix_bitwarden_cert_permissions] Bitwarden cert 권한 정리 완료")
-
-    except subprocess.CalledProcessError as e:
-        log_error(f"[fix_bitwarden_cert_permissions] 실패: {e}")
-
 def resolve_cert_paths(service: str) -> dict:
     """
     인증서 경로를 일원화하여 반환합니다.
-
-    원칙:
-      1) config/<service>.yml의 path.directories.certs + path.files.* 조합
-      2) 없으면 BASE_DIR/<service>/certs/ + 기본 파일명
     """
     cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
 
@@ -452,112 +385,79 @@ def create_service_certificate(service: str, san: str | None = None) -> bool:
         return False
 
 def apply_service_permissions(service: str) -> bool:
+    """
+    서비스별 권한(User/Group) 및 파일 모드(600/644/700) 일괄 적용
+    
+    정책:
+      - Postgres: 70:70
+      - Vaultwarden/Nginx: 별도 권한이 필요할 경우 추가 대응 (현재는 root 혹은 기본값)
+      - 기본: root:root (0:0)
+    """
     try:
         cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
         cfg = load_config(cfg_path) 
-        # [변경] Config에서 Permission 로드 로직 제거 → Secure Default 강제
-        # uid/gid는 서비스별 하드코딩 (이미지 스펙 의존)
         
-        # 기본값 (root:root)
-        uid = 0
-        gid = 0
+        # [UID/GID Mapping] 
+        # 서비스별로 필요한 UID/GID가 있다면 여기서 설정
+        service_ownership = {
+            "postgres": (70, 70),
+            "elk": (1000, 0),  # Elasticsearch (UID 1000)
+            # "vaultwarden": (1000, 1000),  # 필요시 활성화
+            # "nginx": (101, 101),          # 필요시 활성화
+        }
         
-        if service == "postgres":
-            uid = 70
-            gid = 70
-        elif service == "bitwarden":
-            uid = 1001
-            gid = 1001
-        # vault는 root(0) 사용
-        
-        # Mode 강제
-        data_mode = "700"  # User only
-        key_mode = "600"   # User read/write
-        cert_mode = "644"  # World readable for certs
+        # Default to root (0:0)
+        uid, gid = service_ownership.get(service, (0, 0))
+
+        # Mode Settings
+        mode_map = {
+            "data": "700",  # User only
+            "key": "600",   # User read/write
+            "cert": "644",  # World readable
+            "script": "755" # Executable
+        }
 
         service_dir = Path(BASE_DIR) / service
         path_cfg = cfg.get("path", {})
         dirs = path_cfg.get("directories", {})
 
-        # -----------------------------------------
-        # 1) 디렉터리 경로 결정 (config.yml 기반)
-        # -----------------------------------------
+        # 1) 주요 디렉터리 경로
         data_dir = Path(dirs.get("data", f"{service_dir}/data"))
         cert_dir = Path(dirs.get("certs", f"{service_dir}/certs"))
 
-        # -----------------------------------------
-        # 2) 서비스 루트 소유권
-        # -----------------------------------------
-        if service_dir.exists() and uid is not None and gid is not None:
-            subprocess.run(
-                ["sudo", "chown", "-R", f"{uid}:{gid}", str(service_dir)],
-                check=False
-            )
+        # 2) 서비스 루트 소유권 변경
+        if service_dir.exists():
+            subprocess.run(["sudo", "chown", "-R", f"{uid}:{gid}", str(service_dir)], check=False)
             log_info(f"[apply_service_permissions] 소유권 변경 → {service_dir} ({uid}:{gid})")
 
-        # -----------------------------------------
-        # 3) data_dir 권한
-        # -----------------------------------------
+        # 3) Data 디렉터리 권한 (700)
         if sudo_exists(data_dir):
-            subprocess.run(
-                ["sudo", "chmod", "-R", data_mode, str(data_dir)],
-                check=False
-            )
-            log_info(f"[apply_service_permissions] data 권한({data_mode}) 적용 → {data_dir}")
+            subprocess.run(["sudo", "chmod", "-R", mode_map["data"], str(data_dir)], check=False)
+            log_info(f"[apply_service_permissions] data 권한({mode_map['data']}) 적용 → {data_dir}")
 
-        # -----------------------------------------
-        # 4) cert_dir 권한 (key_mode / cert_mode 구분)
-        # -----------------------------------------
+        # 4) Cert 디렉터리 권한
         if sudo_exists(cert_dir):
-            
-            # Private key 파일 처리
+            # Private Keys (600)
+            key_patterns = ["*.key", "*key.pem", "*_key.pem"]
             key_paths = set()
-            key_count = 0
+            for pat in key_patterns:
+                for p in sudo_find_files(cert_dir, pat):
+                    key_paths.add(p)
+                    subprocess.run(["sudo", "chmod", mode_map["key"], str(p)], check=False)
             
-            for pattern in ("*.key", "*key.pem", "*_key.pem"):
-                for path in sudo_find_files(cert_dir, pattern):
-                    key_paths.add(path)
-                    subprocess.run(["sudo", "chmod", key_mode, str(path)], check=False)
-                    key_count += 1
+            # Certificates (644) - anything ending in crt/pem excluding keys
+            cert_patterns = ["*.crt", "*.pem"]
+            for pat in cert_patterns:
+                for p in sudo_find_files(cert_dir, pat):
+                    if p not in key_paths:
+                        subprocess.run(["sudo", "chmod", mode_map["cert"], str(p)], check=False)
 
-            if key_count > 0:
-                log_info(
-                    f"[apply_service_permissions] Private key {key_count}개 ({key_mode}) 적용"
-                )
+            log_info(f"[apply_service_permissions] 인증서 파일 권한(Key:600, Cert:644) 정리 완료")
 
-            # Certificate 파일 처리
-            cert_count = 0
-            for path in sudo_find_files(cert_dir, "*.crt"):
-                if path not in key_paths:
-                    subprocess.run(["sudo", "chmod", cert_mode, str(path)], check=False)
-                    cert_count += 1
-
-            for path in sudo_find_files(cert_dir, "*.pem"):
-                if path not in key_paths:
-                    subprocess.run(["sudo", "chmod", cert_mode, str(path)], check=False)
-                    cert_count += 1
-
-            if cert_count > 0:
-                log_info(
-                    f"[apply_service_permissions] Certificate {cert_count}개 ({cert_mode}) 적용"
-                )
-
-        # -----------------------------------------
-        # 5) 실행 스크립트 권한 (bitwarden.sh 등)
-        # -----------------------------------------
-        for pattern in ("*.sh",):
-            for script_path in sudo_find_files(service_dir, pattern):
-                subprocess.run(["sudo", "chmod", "755", str(script_path)], check=False)
-                log_info(f"[apply_service_permissions] 실행권한(755) 적용 → {script_path}")
-
-        # -----------------------------------------
-        # 6) Bitwarden 보정
-        # -----------------------------------------
-        if service == "bitwarden":
-            try:
-                fix_bitwarden_cert_permissions()
-            except Exception as e:
-                log_warn(f"[apply_service_permissions] Bitwarden 보정 실패: {e}")
+        # 5) 실행 스크립트 권한 (755)
+        for script in sudo_find_files(service_dir, "*.sh"):
+            subprocess.run(["sudo", "chmod", mode_map["script"], str(script)], check=False)
+            log_info(f"[apply_service_permissions] 스크립트 권한(755) 적용 → {script}")
 
         log_info(f"[apply_service_permissions] {service} 권한 정리 완료")
         return True

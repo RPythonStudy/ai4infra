@@ -23,12 +23,16 @@ syspath:
 	python scripts/setup/setup_syspath.py
 	@echo "[setup_syspath] Python syspath setup complete."
 
+network:
+	python scripts/setup/setup_network.py
+	@echo "[setup_network] Docker network check/creation complete."
+
 urls:
 	python scripts/setup/setup_repository_urls.py
 	@echo "[setup_repository_urls] Repository and wiki submodule URLs updated."
 
 # 나머지 자동화 setup
-setup: env logs syspath urls
+setup: network env logs syspath urls
 	@echo "[setup] All setup tasks completed."
 
 restore:

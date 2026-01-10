@@ -129,6 +129,45 @@ def _run_restore_hook_vault(service: str, extract_dir: str) -> bool:
         return False
 
 
+def _prune_old_backups(service: str, backup_dir: str, retention_days: int = 30):
+    """
+    보존 기간(retention_days)이 지난 오래된 백업 파일을 삭제합니다.
+    """
+    log_info(f"[prune] {service} 백업 정리 시작 (보존기간: {retention_days}일)")
+    
+    now = datetime.now().timestamp()
+    retention_sec = retention_days * 24 * 3600
+    deleted_count = 0
+
+    if not os.path.exists(backup_dir):
+        return
+
+    for filename in os.listdir(backup_dir):
+        file_path = os.path.join(backup_dir, filename)
+        
+        # 파일만 대상 (디렉터리 제외)
+        if not os.path.isfile(file_path):
+            continue
+            
+        # 백업 파일 패턴 확인 (service_TIMESTAMP...)
+        if not filename.startswith(f"{service}_"):
+            continue
+
+        try:
+            mtime = os.path.getmtime(file_path)
+            if now - mtime > retention_sec:
+                os.remove(file_path)
+                log_info(f"[prune] 삭제됨 (오래된 백업): {filename}")
+                deleted_count += 1
+        except Exception as e:
+            log_warn(f"[prune] 파일 삭제 실패 {filename}: {e}")
+
+    if deleted_count > 0:
+        log_info(f"[prune] 총 {deleted_count}개의 오래된 백업을 삭제했습니다.")
+    else:
+        log_debug("[prune] 삭제할 오래된 백업이 없습니다.")
+
+
 def backup_data(service: str, method_override: str = None) -> str:
     """
     서비스 백업 (암호화 + 압축)
@@ -157,11 +196,15 @@ def backup_data(service: str, method_override: str = None) -> str:
     # ---------------------------------------------
     data_collected = False
 
-    # Config 로드
-    cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
-    cfg = load_config(cfg_path) or {}
-    backup_cfg = cfg.get("backup", {})
-    method = method_override if method_override else backup_cfg.get("method", "copy")  # override 우선
+    # [Refactor] Config 의존성 제거 → Convention over Configuration
+    # 서비스별 표준 백업 방식 강제 지정
+    method_map = {
+        "postgres": "pg_dump",
+        "vault": "raft_snapshot",
+    }
+    
+    # method_override가 있으면 최우선, 아니면 매핑된 방식, 그것도 없으면 기본값 'copy'
+    method = method_override if method_override else method_map.get(service, "copy")
 
     log_debug(f"[backup_data] {service} backup method: {method}")
 
@@ -178,14 +221,7 @@ def backup_data(service: str, method_override: str = None) -> str:
         src_dir = f"{BASE_DIR}/{service}/data"
         
         # Config Override 확인 (already loaded cfg)
-        try:
-            path_cfg = cfg.get("path", {})
-            dirs = path_cfg.get("directories", {})
-            if dirs.get("data"):
-                src_dir = dirs.get("data")
-        except:
-            pass
-            
+        # Note: 이전 코드에서 불필요하게 cfg를 로드하던 부분 제거 (data_dir 표준 경로 사용)
         if sudo_exists(src_dir):
             subprocess.run(['sudo', 'cp', '-a', src_dir, f"{temp_root}/data"], check=True)
             data_collected = True
@@ -229,6 +265,17 @@ def backup_data(service: str, method_override: str = None) -> str:
     
     if success:
         log_info(f"[backup_data] {service} 보안 백업 완료: {final_file}")
+        
+        # ---------------------------------------------
+        # 5. 오래된 백업 정리 (Retention Policy)
+        # ---------------------------------------------
+        # Config에서 보존 기간 읽기
+        cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
+        cfg = load_config(cfg_path) or {}
+        retention = cfg.get("backup", {}).get("retention_days", 30)
+        
+        _prune_old_backups(service, backup_dir, retention_days=retention)
+        
         return final_file
     else:
         log_error(f"[backup_data] 암호화 실패")
@@ -276,11 +323,13 @@ def restore_data(service: str, backup_path: str) -> bool:
     # ---------------------------------------------
     success = False
 
-    # Config 로드 (복원 시에도 method 확인 필요)
-    cfg_path = f"{PROJECT_ROOT}/config/{service}.yml"
-    cfg = load_config(cfg_path) or {}
-    backup_cfg = cfg.get("backup", {})
-    method = backup_cfg.get("method", "copy")
+    # [Refactor] Config 의존성 제거 → Convention over Configuration
+    # 서비스별 표준 복원 방식 강제 지정
+    method_map = {
+        "postgres": "pg_dump",
+        "vault": "raft_snapshot",
+    }
+    method = method_map.get(service, "copy")
 
     log_debug(f"[restore_data] {service} restore method: {method}")
     

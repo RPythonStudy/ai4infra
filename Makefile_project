@@ -1,20 +1,11 @@
 generate-rootca:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py generate-rootca
 
-create-user:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py create-bitwarden-user
+setup-vault:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py setup-vault-base
 
-install-bitwarden:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install bitwarden
-
-install-bitwarden--reset:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install bitwarden --reset
-
-backup-bitwarden:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py backup bitwarden
-
-restore-bitwarden:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py restore bitwarden
+setup-cron:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py setup_cron
 
 install-postgres:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres
@@ -22,6 +13,35 @@ install-postgres:
 install-postgres--reset:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres --reset
 
+backup-postgres:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py backup postgres
+
+restore-postgres:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py restore postgres
+
+install-nginx:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install nginx
+
+install-nginx--reset:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install nginx --reset
+
+install-vaultwarden:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install vaultwarden
+
+install-vaultwarden--reset:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install vaultwarden --reset
+
+install-ldap:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install ldap
+
+install-ldap--reset:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install ldap --reset
+
+install-elk:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install elk
+
+install-elk--reset:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install elk --reset
 
 install-vault:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install vault
@@ -40,6 +60,12 @@ backup-vault:
 
 restore-vault:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py restore vault
+
+install-keycloak:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install keycloak
+
+install-keycloak--reset:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install keycloak --reset
 
 install-all:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install all

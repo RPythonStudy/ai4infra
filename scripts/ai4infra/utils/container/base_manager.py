@@ -137,8 +137,8 @@ def start_container(service: str):
     result = subprocess.run(cmd, capture_output=True, text=True)
     log_debug(f"[start_container] 파일 권한: {result.stdout.strip()}")
 
-    cmd = ['sudo', 'docker', 'compose', '-f', compose_file, 'up', '-d']
-    log_debug(f"[start_container] 실행 명령: {' '.join(cmd)}")
+    cmd = ['sudo', 'docker', 'compose', 'up', '-d']
+    log_debug(f"[start_container] 실행 명령: {' '.join(cmd)} (Auto-merge overrides)")
     log_debug(f"[start_container] 작업 디렉터리: {service_dir}")
 
     result = subprocess.run(cmd, cwd=service_dir, capture_output=True, text=True)

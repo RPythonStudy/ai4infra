@@ -16,30 +16,8 @@ service:
   enable: true
 
 backup:
-  mode: "hot" # hot or cold (default: cold)
-  method: "pg_dump"
-
-path:
-  directories:
-    data:   "${BASE_DIR}/postgres/data"
-    config: "${BASE_DIR}/postgres/config"
-    certs:  "${BASE_DIR}/postgres/certs"
-
-  files:
-    private_key: "private.key"
-    certificate: "certificate.crt"
-    csr:         "request.csr"
-    root_ca:     "rootCA.crt"
-
-permissions:
-  uid: 70
-  gid: 70
-  data_dir_mode: "700"      # PGDATA
-  key_mode: "600"
-  cert_mode: "644"
-
-tls:
-  enable: true
+  schedule: "0 3 * * *" # Daily 03:00 (Hot Backup)
+  retention_days: 30    # Keep backups for 30 days
 
 env_vars:
   POSTGRES_DB: "ai4infra"

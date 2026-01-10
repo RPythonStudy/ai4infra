@@ -1,32 +1,29 @@
-####################################
-# 파일명: config/ldap.yml
-# 목적: OpenLDAP 설정
-# 기능: 
-#  - LDAP 디렉터리 서비스 설정
-#  - 사용자 인증 및 권한 관리
-# 변경이력
-#  - 2025-11-22: permission 추가 (BenKorea)
-#  - 2025-10-08: 최초 구현 (BenKorea)
-#####################################
-
 service:
   enable: true
 
-path:
-  data: ${BASE_DIR}/ladp/data
-  config: ${BASE_DIR}/ldap/config/postgresql.conf
-  private_key: ${BASE_DIR}/ldap/certs/private.key
-  csr: ${BASE_DIR}/ldap/certs/request.csr
-  service_crt: ${BASE_DIR}/ldap/certs/certificate.crt
-  root_ca: ${BASE_DIR}/ldap/certs/rootCA.crt  
+# Convention: Data path is hardcoded in docker-compose.yml (/opt/ai4infra/ldap/data)
 
-permissions:
-  uid: 100
-  gid: 101
-  data_dir_mode: "700"
-  key_mode: "600"
-  cert_mode: "644"
+backup:
+  schedule: "0 4 * * *" # Daily 04:00
+  retention_days: 30
 
-env_vars:                  
-  LDAP_PORT: 389
-  LDAP_SSL_PORT: 636
+env_vars:
+  # Organization Info
+  LDAP_ORGANISATION: "AI4INFRA"
+  LDAP_DOMAIN: "ai4infra.internal"
+  
+  # Security (Initial Admin Password)
+  # .env 파일 생성 시 자동 주입되거나 사용자가 직접 수정해야 함.
+  # 여기서는 기본값을 비워두거나 참조만 함.
+  
+  # Config password (cn=config 수정용)
+  # LDAP_CONFIG_PASSWORD: "config"
+
+compose_vars:
+  # Resources
+  LDAP_MEM_LIMIT: "256m"
+  ADMIN_MEM_LIMIT: "128m"
+  
+  # Ports (Host Binding)
+  LDAP_PORT: "389"
+  LDAPS_PORT: "636"

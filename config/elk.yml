@@ -1,0 +1,31 @@
+service:
+  enable: true
+
+# Convention: Data path is hardcoded in docker-compose.yml (/opt/ai4infra/elk/data)
+
+backup:
+  schedule: "0 3 * * *" # Daily 03:00 (Snapshot repo backup logic needed later)
+  retention_days: 30
+
+env_vars:
+  # Elasticsearch Settings
+  ELASTIC_VERSION: "7.17.13" # Stable version (8.x requires more config for security)
+  CLUSTER_NAME: "ai4infra-cluster"
+  
+  # Security (Elastic Built-in Security)
+  # true로 설정 시 ID/PW 로그인 필요 (elastic / changeme)
+  # 개발 단계에서는 편의상 false, 운영 시 true 권장 + .env 비밀번호 관리
+  ELASTIC_SECURITY_ENABLED: "false"
+
+compose_vars:
+  # Resources (JVM Heap Size is critical)
+  ES_MEM_LIMIT: "2g"
+  ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+  
+  KIBANA_MEM_LIMIT: "512m"
+  
+  # Ports
+  ES_PORT: "9200"
+  KIBANA_PORT: "5601"
+  LOGSTASH_PORT: "5044"
+  LOG_PATH: "/var/log/ai4infra"

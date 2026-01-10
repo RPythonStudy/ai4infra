@@ -101,8 +101,13 @@ print() 대신 반드시 아래의 전용 로거를 사용합니다. 로그 폴�
 3.  **변수 명명 및 관리 (Variable Strategy)**:
     - **.env**: 전역 변수 및 `env_vars`(공식 환경변수)를 정의하며, 서비스명 주석으로 구분합니다.
     - **config/*.yml**:
-        - `env_vars`: 컨테이너 내부로 전달되는 공식 환경변수 (예: `VAULT_ADDR`).
-        - `compose_vars`: `docker-compose.yml` 구성에 사용되는 치환용 변수 (예: `PORT`, `VAULT_MEM_LIMIT`).
+        - **Service Identity**: 모든 설정 파일은 반드시 맨 위에 `service: enable: true` (또는 false) 형식을 따라야 합니다.
+        - **Passwords**: 비밀번호와 같은 민감 정보는 yml 파일에 직접 적지 않고, `.env` 파일에 정의한 후 이를 참조하거나 주입받도록 구성해야 합니다. (예: Postgres, LDAP)
+        - `env_vars`: 컨테이너 내부로 전달되는 공식 환경변수.
+        - `compose_vars`: `docker-compose.yml` 구성에 사용되는 치환용 변수. 특히 **Port**는 하드코딩하지 않고 여기서 변수(`LDAP_PORT` 등)로 정의하여 충돌을 방지합니다.
+    - **Docker Compose Templates**:
+        - **Ports**: `${VAR:-Default}` 형식으로 변수화하여 `compose_vars`와 연동합니다.
+        - **Images**: 버전 태그를 명시(`1.32.0`)하고, `config/*.yml`에는 중복 기재하지 않습니다.
     - **작동 원리**: 전용 스크립트가 위 설정들을 병합하여, 서비스 실행 시점에 해당 서비스 전용 `.env` 파일을 동적으로 생성합니다.
 
 4.  **네트워크 바인딩 (Network Binding)**:
@@ -182,8 +187,9 @@ print() 대신 반드시 아래의 전용 로거를 사용합니다. 로그 폴�
     -   **전략**: **2-Step Initialization** (평문 구동 → 사용자/폴더 생성 → 인증서 권한 설정 → TLS 모드 재기동).
 
 3.  **Reverse Proxy / Termination** (예: Web Apps)
-    -   Nginx 등이 앞단에서 TLS를 처리하고 내부 통신은 평문을 사용하는 경우.
+    -   Nginx 등이 앞단에서 TLS를 처리하고 내부 통신은 평문을 사용하는 경우. (단, Vault/Bitwarden 등 보안이 중요한 서비스는 내부 통신도 TLS를 적용합니다.)
     -   **전략**: 컨테이너는 평문으로 유지하고 `docker-compose` 네트워크 내부 통신만 허용.
+    -   **Nginx Gateway**: `vault.conf` 등의 설정에서 `proxy_pass https://...`를 사용하여 백엔드(Vault)와도 암호화 통신을 수행합니다. (Protocol Mismatch 방지)
 
 본 프로젝트는 보안성과 개발 편의성(잦은 재부팅)의 균형을 위해 **"Smart Key (USB + Server File)"** 전략을 사용합니다.
 
@@ -204,6 +210,25 @@ print() 대신 반드시 아래의 전용 로거를 사용합니다. 로그 폴�
 - **USB 분실**: 금고에 보관된 **예비 USB** 사용.
 - **서버 디스크 파손**: 외부 **Bitwarden** (Secure Note)에 백업된 복호화 비밀번호를 참조하여 서버 파일 복구.
 - **Whole System Down**: 어떠한 경우에도 외부(Bitwarden)에 비밀번호가 있고, 물리적(금고)으로 Unseal Key가 있으므로 복구 가능.
+
+### 7.4 Vault Provisioning Strategy (볼트 프로비저닝 전략)
+> **원칙**: `ai4infra`는 **범용적인 인프라 환경(Base)**만 구성하며, 특정 서비스(APP)에 종속된 정책(Policy)이나 역할(Role)은 정의하지 않습니다.
+
+1.  **Common Infrastructure (ai4infra 담당)**:
+    *   **KV Engine (v2) 활성화**: `secret/` 경로. (모든 앱의 공통 저장소)
+    *   **AppRole Auth 활성화**: `auth/approle/` 경로. (서버 인증 표준)
+    *   **Audit Log 활성화**: `file` 디바이스 (`/vault/logs/audit.log`). (보안 감사 필수)
+    *   **Action**: `setup-vault-base` 명령어로 구현.
+
+2.  **Service Specific (각 앱 프로젝트 담당)**:
+    *   **Policy Definition**: 특정 경로(`secret/my-app/*`)에 대한 접근 제어.
+    *   **Role Creation**: 앱별 인증 역할(`my-app-role`) 및 Secret ID 발급.
+    *   **Secret Injection**: 실제 사용할 키/데이터 저장.
+
+### 7.5 Recovery Policy (복구 정책)
+- **General Recovery**: 일반적인 복구(장애 대응)는 `make restore-<service>` 명령을 사용하며, 자동으로 **가장 최신**의 백업 파일을 찾아 복원합니다.
+- **Point-in-Time Recovery (PITR)**: 특정 시점으로의 복구는 데이터 정합성을 해칠 수 있는 민감한 작업이므로, 자동화 스크립트(Makefile) 대신 **CLI를 직접 사용**하여 복구할 시점의 파일 경로를 명시적으로 지정해야 합니다.
+    - 권장 명령: `python scripts/ai4infra/ai4infra-cli.py restore <service> <backup_file_path>`
 
 ## 8. Testing & Certification Strategy (테스트 및 인증 전략)
 > **목표**: "한국 우수 소프트웨어 인증(GS 인증 등)" 획득을 대비하여, 기능 구현과 테스트 작성을 분리된 프로세스로 관리합니다.

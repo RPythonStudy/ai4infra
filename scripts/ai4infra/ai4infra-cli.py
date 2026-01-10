@@ -17,9 +17,6 @@ from dotenv import load_dotenv
 # Local imports
 from common.logger import log_debug, log_error, log_info
 
-# user manager
-
-
 # base manager
 from utils.container.base_manager import stop_container
 from utils.container.base_manager import copy_template
@@ -29,9 +26,6 @@ from utils.container.base_manager import ensure_network
 # backup & restore
 from utils.container.backup_manager import backup_data
 from utils.container.backup_manager import restore_data
-
-# bitwarden installer
-
 
 # USB secrets
 from utils.container.usb_secrets import setup_usb_secrets
@@ -45,7 +39,7 @@ from utils.container.health_postgres import check_postgres
 from utils.container.installer import discover_services, is_hot_backup_service
 from common.load_config import load_config
 
-#
+# env manager
 from utils.container.env_manager import generate_env
 # -------------------------------------------------------------
 # 인증서 모듈 (기존 유지, 한 줄씩)
@@ -66,9 +60,58 @@ app = typer.Typer(help="AI4INFRA 서비스 관리")
 def generate_rootca():
     generate_root_ca_if_needed()
 
-@app.command()
-
+def _ensure_postgres_db(db_name="keycloak", db_user="keycloak"):
+    """
+    운영 중인 Postgres에 Keycloak DB/User가 없으면 자동 생성.
+    (비밀번호는 .env의 KEYCLOAK_DB_PASSWORD 참조)
+    """
+    log_info(f"[_ensure_postgres_db] {db_name} 데이터베이스 확인 중...")
     
+    # 1. Postgres 컨테이너 실행 여부 확인
+    if not check_container("postgres"):
+        log_error("[_ensure_postgres_db] Postgres 컨테이너가 실행 중이지 않습니다.")
+        return
+
+    # 2. DB 존재 여부 확인
+    check_db_cmd = [
+        "sudo", "docker", "exec", "ai4infra-postgres",
+        "psql", "-U", "postgres", "-lqt"
+    ]
+    try:
+        res = subprocess.run(check_db_cmd, capture_output=True, text=True, check=True)
+        if f" {db_name} " in res.stdout:
+            log_info(f"[_ensure_postgres_db] {db_name} DB가 이미 존재합니다.")
+            return
+    except subprocess.CalledProcessError:
+        log_error("[_ensure_postgres_db] DB 목록 조회 실패")
+        return
+
+    # 3. DB 및 User 생성
+    log_info(f"[_ensure_postgres_db] {db_name} DB 생성 시작...")
+    pw = os.getenv("KEYCLOAK_DB_PASSWORD", "keycloak")
+    
+    create_cmds = [
+        f"CREATE USER {db_user} WITH PASSWORD '{pw}';",
+        f"CREATE DATABASE {db_name};",
+        f"GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {db_user};",
+        f"ALTER DATABASE {db_name} OWNER TO {db_user};"
+    ]
+    
+    for sql in create_cmds:
+        # 비밀번호 노출 방지를 위해 로그는 생략하거나 마스킹 필요 (여기선 생략)
+        cmd = [
+            "sudo", "docker", "exec", "ai4infra-postgres",
+            "psql", "-U", "postgres", "-c", sql
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            log_error(f"[_ensure_postgres_db] SQL 실행 실패: {sql.split('WITH')[0]}...") # PW 마스킹
+            return
+
+    log_info(f"[_ensure_postgres_db] {db_name} DB 및 User 생성 완료")
+
+
 @app.command()
 def install(
     service: str = typer.Argument("all", help="설치할 서비스 이름"),
@@ -79,6 +122,11 @@ def install(
     services = list(discover_services()) if service == "all" else [service]
     for svc in services:
         service_dir = f"{BASE_DIR}/{svc}"
+
+        # [Keycloak 전처리] DB 준비 (컨테이너 중지 전에 수행해야 함 -> 하지만 install은 보통 중지 후 복사)
+        # 하지만 Postgres는 다른 서비스이므로 중지되지 않음. (svc=keycloak일 때 postgres는 살아있음)
+        if svc == "keycloak":
+             _ensure_postgres_db()
 
         # 1) 컨테이너 중지
         stop_container(f"ai4infra-{svc}")
@@ -99,7 +147,7 @@ def install(
         # 4) 서비스별 권한 설정 (복사 직후 실행)
         apply_service_permissions(svc)
 
-        # 5) 서비스별 인증서 생성 (Bitwarden 설치 완료 후)
+        # 5) 서비스별 인증서 생성
         create_service_certificate(service=svc, san=None)
 
         # 6) 환경파일 생성 (.env)
@@ -110,13 +158,27 @@ def install(
         # 7) 컨테이너 시작
         start_container(svc)
 
+        # [Keycloak 후처리] Nginx Reload (새로운 conf 반영)
+        if svc == "keycloak":
+             log_info("[install] Nginx 설정을 반영하기 위해 Nginx 재시작...")
+             subprocess.run(["sudo", "docker", "restart", "ai4infra-nginx"], check=False)
+
         # -----------------------------
         # 설치 후 자동 점검 단계 추가
         # -----------------------------
         if svc == "vault":
+            # [Auto-Unseal Integration] 설치 직후 언실 시도
+            _execute_unseal_vault(interactive=False)
             check_container("vault", check_vault)
         elif svc == "postgres":
             check_container("postgres", check_postgres)
+        elif svc == "elk":
+            check_container("elasticsearch")
+            check_container("kibana")
+            check_container("logstash")
+            check_container("filebeat")
+        elif svc == "keycloak":
+             check_container("keycloak")
         else:
             check_container(svc)  # 기본 점검
 
@@ -157,107 +219,131 @@ def install(
         log_info(f"[install] {svc} 설치 및 점검 완료")
 
 @app.command()
-def backup(service: str = typer.Argument(..., help="백업할 서비스 (postgres, all)")):
-    """서비스 데이터 백업 (컨테이너 중지 → 백업 → 재시작)"""
+def backup(
+    service: str = typer.Argument(..., help="백업할 서비스 (postgres, all)"),
+    cold: bool = typer.Option(False, "--cold", help="콜드 백업 모드 (컨테이너 중지 후 백업)")
+):
+    """
+    서비스 데이터 백업
+    - 기본: Hot Backup (운영 중 백업, 중단 없음) -> Cron/Daily용
+    - --cold: Cold Backup (중지 후 백업) -> 점검/마이그레이션용
+    """
 
-    # install()과 동일한 서비스 자동 탐색 방식
     services = list(discover_services()) if service == "all" else [service]
-
     backup_files = []
 
     for svc in services:
-        
-        # [Policy] Cold Backup Enforcement (GEMINI.md 참조)
-        # Hot/Cold 구분 없이 무조건 중지하여 정합성 보장
-        stop_container(f"ai4infra-{svc}")
+        log_info(f"[backup] {svc} 백업 시작 (Mode: {'COLD' if cold else 'HOT'})")
 
-        try:
-            # 2) 백업 수행
+        # Cold Backup Mode
+        if cold:
+            stop_container(f"ai4infra-{svc}")
+            try:
+                backup_file = backup_data(svc)
+                if backup_file:
+                    backup_files.append(backup_file)
+            finally:
+                # Cold Backup은 반드시 재시작
+                start_container(svc)
+        
+        # Hot Backup Mode (Default)
+        else:
+            # 컨테이너가 실행 중이어야 함
+            # backup_data 내부에서 docker exec 사용
             backup_file = backup_data(svc)
             if backup_file:
                 backup_files.append(backup_file)
-        finally:
-            # 3) 반드시 재시작 (백업 성공/실패 여부와 관계없이)
-            start_container(svc)
 
     if backup_files:
         log_info(f"[backup] {len(backup_files)}개 백업 완료")
     else:
-        log_info("[backup] 백업할 데이터가 없습니다")
+        log_warn("[backup] 백업된 파일이 없습니다 (실패 또는 데이터 없음)")
 
+@app.command()
 @app.command()
 def restore(
     service: str = typer.Argument(..., help="복원할 서비스"),
-    backup_dir: str = typer.Argument(None, help="백업 디렉터리 경로 (생략 시 최신 백업 자동 선택)")
+    backup_file: str = typer.Argument(None, help="복원할 백업 파일 경로 (.gpg) (생략 시 최신 백업 자동 선택)")
 ):
     """
-    AI4INFRA 서비스 복원 (백업 시점의 권한/소유권 그대로 복구)
-
-    절차:
-      1) 백업 디렉터리 확인 (미지정 시 최신 백업 자동 선택)
-      2) 컨테이너 중지
-      3) rsync -a --numeric-ids 로 완전 복원
-      4) generate_env() 재생성
-      5) start_container()
+    AI4INFRA 서비스 복원
+    - 암호화된 백업 파일(.gpg)을 복호화하여 복원합니다.
+    - Postgres/Vault: 서비스가 켜진 상태에서 API/CLI로 데이터 주입
+    - 기타: 서비스 중지 후 데이터 파일 덮어쓰기
     """
     
-    # 1) 백업 디렉터리 결정
-    if backup_dir is None:
-        # 최신 백업 자동 선택
+    # 1. 백업 파일 결정
+    if backup_file is None:
         backups_root = f"{BASE_DIR}/backups/{service}"
         if not os.path.exists(backups_root):
             log_error(f"[restore] 백업 디렉터리 없음: {backups_root}")
             return
         
-        # 서비스명_타임스탬프 형식의 디렉터리 찾기
-        backup_dirs = [
-            d for d in os.listdir(backups_root)
-            if os.path.isdir(os.path.join(backups_root, d)) and d.startswith(f"{service}_")
+        # 파일 찾기
+        files = [
+            f for f in os.listdir(backups_root) 
+            if f.startswith(f"{service}_") and f.endswith(".gpg")
         ]
         
-        if not backup_dirs:
-            log_error(f"[restore] {service} 백업 없음: {backups_root}")
+        if not files:
+            log_error(f"[restore] {service} 백업 파일(.gpg)이 없습니다: {backups_root}")
             return
         
-        # 타임스탬프 기준 정렬 (최신순)
-        backup_dirs.sort(reverse=True)
-        backup_dir = os.path.join(backups_root, backup_dirs[0])
-        log_info(f"[restore] 최신 백업 자동 선택: {backup_dir}")
+        # 최신순 정렬
+        files.sort(reverse=True)
+        backup_file = os.path.join(backups_root, files[0])
+        log_info(f"[restore] 최신 백업 자동 선택: {backup_file}")
     
-    log_info(f"[restore] {service} 복원 시작: {backup_dir}")
-    
-    # 2) 백업 디렉터리 존재 확인
-    if not os.path.exists(backup_dir):
-        log_error(f"[restore] 백업 디렉터리 없음: {backup_dir}")
+    if not os.path.exists(backup_file):
+        log_error(f"[restore] 파일 없음: {backup_file}")
         return
 
-    # 3) 컨테이너 중지
-    stop_container(f"ai4infra-{service}")
+    # 2. 서비스별 복원 전략 확인
+    # (backup_manager와 동일한 로직으로 판단)
+    hot_restore_services = ["postgres", "vault"]
+    is_hot = service in hot_restore_services
 
-    # 4) rsync로 백업 그대로 복원 (권한/소유자 포함)
-    service_dir = f"{BASE_DIR}/{service}"
-    cmd = ['sudo', 'rsync', '-a', '--numeric-ids', f"{backup_dir}/", f"{service_dir}/"]
-    subprocess.run(cmd, check=True)
-    log_info(f"[restore] 복원 완료 (권한 포함 그대로): {backup_dir} → {service_dir}")
-
-    # 5) 환경파일(.env) 재생성
-    env_path = generate_env(service)
-    if env_path:
-        log_info(f"[restore] {service}: .env 재생성 완료 → {env_path}")
+    if is_hot:
+        log_info(f"[restore] {service}: Hot Restore 모드 (컨테이너 실행 상태 유지)")
+        # 컨테이너가 켜져 있는지 확인
+        if not check_container(service):
+            log_warn(f"[restore] {service} 컨테이너가 실행 중이지 않습니다. 복원을 위해 시작합니다.")
+            start_container(service)
+            # 잠시 대기
+            import time
+            time.sleep(5)
     else:
-        log_info(f"[restore] {service}: .env 생성 생략")
+        log_info(f"[restore] {service}: Cold Restore 모드 (컨테이너 중지)")
+        stop_container(f"ai4infra-{service}")
 
-    # [Safe Guard] docker-compose.yml 누락 감지 (예: 오래된 백업 복원 시)
-    service_dir = f"{BASE_DIR}/{service}"
-    if not os.path.exists(f"{service_dir}/docker-compose.yml"):
-        log_info(f"[restore] docker-compose.yml 누락 감지 → 템플릿 복사 수행")
-        copy_template(service)
-        # 템플릿 복사 후 권한 재설정
-        apply_service_permissions(service)
+    # 3. 복원 실행 (backup_manager 위임)
+    try:
+        success = restore_data(service, backup_file)
+        
+        if success:
+            log_info(f"[restore] {service} 복원 성공")
+            
+            # Post-Restore Actions
+            if not is_hot:
+                # Cold Restore인 경우 재시작
+                generate_env(service)
+                # 권한 재설정 (파일 덮어쓰기로 인해 틀어졌을 수 있음)
+                apply_service_permissions(service)
+                start_container(service)
+            
+            # 서비스별 사후 점검
+            if service == "postgres":
+                 check_container("postgres", check_postgres)
+            elif service == "vault":
+                 check_container("vault", check_vault)
+            else:
+                 check_container(service)
 
-    # 6) 컨테이너 재시작
-    start_container(service)
-    log_info(f"[restore] {service} 복원 완료")
+        else:
+            log_error(f"[restore] {service} 복원 실패")
+            
+    except Exception as e:
+        log_error(f"[restore] 예외 발생: {e}")
 
     # -----------------------------
     # 설치 후 자동 점검 단계 추가
@@ -351,14 +437,15 @@ def init_vault():
             if e.stderr:
                 print(e.stderr)
 
-@app.command()
-def unseal_vault():
-    """Vault 언씰 - 사용자가 직접 터미널에서 vault operator unseal 명령을 실행하도록 안내합니다."""
-    log_info("[unseal_vault] Vault 언씰 절차 시작")
 
+def _execute_unseal_vault(interactive: bool = False):
+    """
+    Vault 언씰 로직 (내부 함수)
+    interactive=True일 경우 사용자에게 수동 입력 안내 메시지를 출력합니다.
+    """
     status_cmd = [
         'sudo', 'docker', 'exec', 
-        '-e', 'VAULT_ADDR=https://127.0.0.1:8200',  # [Fix] TLS 인증서 IP 불일치 해결
+        '-e', 'VAULT_ADDR=https://127.0.0.1:8200',
         'ai4infra-vault',
         'vault', 'status', '-format=json'
     ]
@@ -379,13 +466,20 @@ def unseal_vault():
 
     # 2) 초기화 여부 확인
     if not initialized:
-        log_error("[unseal_vault] Vault가 초기화되지 않았습니다. 먼저 init-vault 실행하십시오.")
+        msg = "Vault가 초기화되지 않았습니다. 먼저 init-vault 실행하십시오."
+        if interactive:
+            log_error(f"[unseal_vault] {msg}")
+        else:
+            log_info(f"[install|unseal] {msg}")
         return
 
     # 3) 언실 여부 확인
     if not sealed:
-        log_info("[unseal_vault] Vault는 이미 언실되어 있습니다.")
-        print("Vault UI: https://localhost:8200")
+        if interactive:
+            log_info("[unseal_vault] Vault는 이미 언실되어 있습니다.")
+            print("Vault UI: https://localhost:8200")
+        else:
+            log_info("[install|unseal] Vault는 이미 언실되어 있습니다.")
         return
 
     # [Dev Simulation] Mock USB 자동 언실 시도
@@ -420,7 +514,8 @@ def unseal_vault():
                 
                 if success_count >= threshold:
                     log_info("[unseal_vault] 자동 언실 성공!")
-                    print("Vault UI: https://localhost:8200")
+                    if interactive:
+                        print("Vault UI: https://localhost:8200")
                     return
                 else:
                     log_error(f"[unseal_vault] 자동 언실 실패 (성공: {success_count}/{threshold})")
@@ -429,43 +524,166 @@ def unseal_vault():
             log_error(f"[unseal_vault] 키 파일 읽기 오류: {e}")
             
     # -------------------------------------------------------------
-    # 수동 모드 (USB 없음)
+    # 수동 모드 안내 (Interactive True일 때만)
     # -------------------------------------------------------------
+    if interactive:
+        print("\n===================================================================")
+        print(" Vault 언실(Unseal) 절차 안내 (수동 방식)")
+        print("===================================================================\n")
+        print(" * 가상 USB 키 파일(mock_usb/vault_keys.json)을 찾을 수 없습니다.\n")
+
+        print("Vault는 보안상의 이유로 sealed 상태로 시작합니다.")
+        print(f"이 Vault는 총 {threshold}개의 Unseal Key 중 최소 {threshold}개가 필요합니다.\n")
+
+        print("이제 사용자가 직접 vault operator unseal 명령을 실행해야 합니다.")
+        print("각 키 입력은 반드시 사람이 직접 수행해야 하며, 자동화할 수 없습니다.\n")
+
+        print("-------------------------------------------------------------------")
+        print("  아래 명령을 터미널에 직접 입력하십시오.")
+        print("-------------------------------------------------------------------\n")
+
+        print("1) Vault 컨테이너 내부로 들어가기:")
+        print("   sudo docker exec -it ai4infra-vault /bin/sh\n")
+
+        print("2) Vault 언실 명령 실행:")
+        print("   vault operator unseal\n")
+        print("   → Unseal Key #1 입력")
+        print("   vault operator unseal\n")
+        print("   → Unseal Key #2 입력")
+        print("   vault operator unseal\n")
+        print("   → Unseal Key #3 입력\n")
+
+        print("3) sealed=false 상태가 되면 언실이 완료됩니다.")
+        print("   vault status\n")
+
+        print("\n-------------------------------------------------------------------")
+        print(" Vault 웹 UI:")
+        print("   https://localhost:8200")
+        print("-------------------------------------------------------------------\n")
+
+        log_info("[unseal_vault] 사용자에게 Vault 언실 명령 실행 안내 (수동)")
+    else:
+        log_warn("[install|unseal] 자동 언실 실패 (USB 키 없음) → 수동 언실 필요: 'make unseal-vault' 실행")
+
+@app.command()
+def unseal_vault():
+    """Vault 언씰 - 사용자가 직접 터미널에서 vault operator unseal 명령을 실행하도록 안내합니다."""
+    log_info("[unseal_vault] Vault 언씰 절차 시작")
+    _execute_unseal_vault(interactive=True)
+
+@app.command()
+def setup_vault_base():
+    """
+    Vault 기본 인프라 구성 (Common Infrastructure)
+    - KV Engine (v2) 활성화: secret/
+    - AppRole Auth 활성화: auth/approle/
+    - Audit Log 활성화: file (/vault/logs/audit.log)
+    """
+    log_info("[setup_vault_base] Vault 기본 구성 시작")
+
+    base_cmd = [
+        'sudo', 'docker', 'exec', 
+        '-e', 'VAULT_ADDR=https://127.0.0.1:8200', 
+        'ai4infra-vault',
+        'vault'
+    ]
+    
+    # 1. 상태 점검
+    try:
+        res = subprocess.run(base_cmd + ['status', '-format=json'], capture_output=True, text=True)
+        status = json.loads(res.stdout)
+        if not status.get('initialized') or status.get('sealed'):
+            log_error("[setup_vault_base] Vault가 초기화되지 않았거나 Sealed 상태입니다.")
+            return
+    except Exception:
+        log_error("[setup_vault_base] Vault 상태 확인 실패. 컨테이너가 실행 중인지 확인하세요.")
+        return
+
+    # 2. KV Engine (v2) 활성화
+    try:
+        log_info("1) KV Engine (secret/) 활성화 확인...")
+        subprocess.run(
+            base_cmd + ['secrets', 'enable', '-path=secret', '-version=2', 'kv'],
+            capture_output=True, text=True
+        ) # 이미 있으면 에러나지만 무시 (멱등성)
+        log_info("   → 완료 (또는 이미 존재)")
+    except Exception as e:
+        log_warn(f"   → 확인 필요: {e}")
+
+    # 3. AppRole Auth 활성화
+    try:
+        log_info("2) AppRole Auth (auth/approle/) 활성화 확인...")
+        subprocess.run(
+            base_cmd + ['auth', 'enable', 'approle'], 
+            capture_output=True, text=True
+        )
+        log_info("   → 완료 (또는 이미 존재)")
+    except Exception as e:
+        log_warn(f"   → 확인 필요: {e}")
+
+    # 4. Audit Device 활성화
+    try:
+        log_info("3) Audit Device (file) 활성화 확인...")
+        # 로그 파일 권한 문제 방지를 위해 먼저 파일 생성 시도 (optional)
+        subprocess.run(['sudo', 'docker', 'exec', 'ai4infra-vault', 'touch', '/vault/logs/audit.log'], check=False)
+        subprocess.run(['sudo', 'docker', 'exec', 'ai4infra-vault', 'chmod', '666', '/vault/logs/audit.log'], check=False)
+
+        subprocess.run(
+            base_cmd + ['audit', 'enable', 'file', 'file_path=/vault/logs/audit.log'],
+            capture_output=True, text=True
+        )
+        log_info("   → 완료 (또는 이미 존재)")
+    except Exception as e:
+        log_warn(f"   → 확인 필요: {e}")
+
+    log_info("[setup_vault_base] 기본 구성 완료. (세부 정책은 각 서비스 프로젝트에서 설정하십시오)")
+
+@app.command()
+def clean_backups(service: str = typer.Argument("all", help="백업을 삭제할 서비스 (all 또는 서비스명)")):
+    """서비스의 모든 백업 데이터를 삭제합니다."""
+    
+    backups_root = f"{BASE_DIR}/backups"
+    if not os.path.exists(backups_root):
+        log_info("[clean_backups] 백업 디렉터리가 존재하지 않습니다.")
+        return
+
+    # Determine targets
+    if service == "all":
+        # 백업 폴더 내의 모든 하위 폴더/파일 대상
+        targets = os.listdir(backups_root)
+    else:
+        # 특정 서비스만
+        targets = [service]
+
+    # Filter targets to ensure they are items in backups_root
+    valid_targets = []
+    for t in targets:
+        path = os.path.join(backups_root, t)
+        if os.path.exists(path):
+            valid_targets.append(t)
+    
+    if not valid_targets:
+        log_warn(f"[clean_backups] '{service}'에 대한 백업을 찾을 수 없습니다.")
+        return
+
     print("\n===================================================================")
-    print(" Vault 언실(Unseal) 절차 안내 (수동 방식)")
+    print(f" [주의] 다음 항목의 백업 데이터가 영구적으로 삭제됩니다: {', '.join(valid_targets)}")
     print("===================================================================\n")
-    print(" * 가상 USB 키 파일(mock_usb/vault_keys.json)을 찾을 수 없습니다.\n")
+    
+    confirm = typer.confirm("정말로 삭제하시겠습니까?", default=False)
+    if not confirm:
+        log_info("[clean_backups] 삭제 취소됨")
+        return
 
-    print("Vault는 보안상의 이유로 sealed 상태로 시작합니다.")
-    print(f"이 Vault는 총 {threshold}개의 Unseal Key 중 최소 {threshold}개가 필요합니다.\n")
-
-    print("이제 사용자가 직접 vault operator unseal 명령을 실행해야 합니다.")
-    print("각 키 입력은 반드시 사람이 직접 수행해야 하며, 자동화할 수 없습니다.\n")
-
-    print("-------------------------------------------------------------------")
-    print("  아래 명령을 터미널에 직접 입력하십시오.")
-    print("-------------------------------------------------------------------\n")
-
-    print("1) Vault 컨테이너 내부로 들어가기:")
-    print("   sudo docker exec -it ai4infra-vault /bin/sh\n")
-
-    print("2) Vault 언실 명령 실행:")
-    print("   vault operator unseal\n")
-    print("   → Unseal Key #1 입력")
-    print("   vault operator unseal\n")
-    print("   → Unseal Key #2 입력")
-    print("   vault operator unseal\n")
-    print("   → Unseal Key #3 입력\n")
-
-    print("3) sealed=false 상태가 되면 언실이 완료됩니다.")
-    print("   vault status\n")
-
-    print("\n-------------------------------------------------------------------")
-    print(" Vault 웹 UI:")
-    print("   https://localhost:8200")
-    print("-------------------------------------------------------------------\n")
-
-    log_info("[unseal_vault] 사용자에게 Vault 언실 명령 실행 안내 (수동)")
+    for t in valid_targets:
+        target_path = os.path.join(backups_root, t)
+        log_info(f"[clean_backups] 삭제 중: {target_path}")
+        try:
+            # 디렉터리 자체를 삭제 (backup 시 mkdir -p로 재생성됨)
+            subprocess.run(['sudo', 'rm', '-rf', target_path], check=True)
+            log_info(f"[clean_backups] {t} 삭제 완료")
+        except subprocess.CalledProcessError as e:
+            log_error(f"[clean_backups] {t} 삭제 실패: {e}")
 
 @app.command()
 def install_rootca_windows():
@@ -474,6 +692,85 @@ def install_rootca_windows():
     """
     
     install_root_ca_windows()
+
+@app.command()
+def setup_cron():
+    """
+    모든 서비스의 설정(backup.schedule)을 읽어 Crontab에 자동 백업 작업 등록
+    """
+    log_info("[setup_cron] Cron 백업 스케줄 설정 시작")
+    
+    # 1. 설정 수집
+    cron_lines = []
+    # ai4infra-cli.py 절대 경로
+    cli_path = os.path.abspath(__file__)
+    # python 인터프리터 (venv) 경로
+    python_path = sys.executable
+
+    services = discover_services()
+    for svc in services:
+        cfg = load_config(f"{BASE_DIR}/{svc}/config/config.yml") # config 파일 위치는 환경변수 로딩 방식에 따름
+        # [Note] discover_services는 config/*.yml을 읽지만, 여기선 상세 설정(schedule) 확인 필요
+        # load_config는 경로를 인자로 받음. 프로젝트 루트 기준 config/{svc}.yml 로드
+        cfg = load_config(f"{PROJECT_ROOT}/config/{svc}.yml") or {}
+        
+        schedule = cfg.get("backup", {}).get("schedule")
+        if schedule:
+            log_info(f" - {svc}: {schedule} detected")
+            # Cron Line: {schedule} {user} {command}
+            # 주의: user cron에 등록하므로 user 필드는 생략 (system cron 아님)
+            # Log 리다이렉션 포함
+            cmd = f"{python_path} {cli_path} backup {svc} >> /var/log/ai4infra/cron_backup.log 2>&1"
+            line = f"{schedule} {cmd} # AI4INFRA-BACKUP:{svc}"
+            cron_lines.append(line)
+    
+    if not cron_lines:
+        log_info("[setup_cron] 등록할 백업 스케줄이 없습니다.")
+        return
+
+    # 2. 기존 Crontab 로드
+    try:
+        # crontab -l 실행 (없으면 fail)
+        current_cron = subprocess.run(["crontab", "-l"], capture_output=True, text=True).stdout
+    except Exception:
+        current_cron = ""
+
+    # 3. 기존 AI4INFRA 항목 제거 (Idempotency)
+    new_cron = []
+    for line in current_cron.splitlines():
+        if "# AI4INFRA-BACKUP" not in line:
+            new_cron.append(line)
+    
+    # 4. 신규 항목 추가
+    new_cron.extend(cron_lines)
+    
+    # 마지막 줄바꿈
+    if new_cron and new_cron[-1] != "":
+        new_cron.append("")
+        
+    final_cron_content = "\n".join(new_cron) + "\n"
+
+    # 5. 등록
+    try:
+        subprocess.run(
+            ["crontab", "-"], 
+            input=final_cron_content, 
+            text=True, 
+            check=True
+        )
+        log_info(f"[setup_cron] Crontab 업데이트 완료 ({len(cron_lines)}개 등록)")
+        for l in cron_lines:
+            log_debug(f" [+] {l}")
+            
+        # 로그 파일 권한 확인 (User가 쓸 수 있도록)
+        log_dir = "/var/log/ai4infra"
+        if not os.path.exists(log_dir):
+            subprocess.run(["sudo", "mkdir", "-p", log_dir])
+            subprocess.run(["sudo", "chmod", "777", log_dir]) # 임시 (실 운영시 더 정교한 권한 필요)
+            
+    except subprocess.CalledProcessError as e:
+        log_error(f"[setup_cron] Crontab 등록 실패: {e.stderr}")
+
 
 if __name__ == "__main__":
     try:

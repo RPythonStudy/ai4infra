@@ -1,16 +1,27 @@
-# Vaultwarden Configuration
-# Standard environment variables for the container
+service:
+  enable: true
+
+
+backup:
+  schedule: "0 5 * * *" # Daily 05:00 (Cold Backup recommended for SQLite, but we use Postgres)
+  retention_days: 30
 
 env_vars:
-  # Web Vault Settings
-  - WEB_VAULT_ENABLED=true
-  - SIGNUPS_ALLOWED=false  # 회원가입 제한 (초기 관리자 생성시에만 true로 변경 권장)
-  - INVITATIONS_ALLOWED=false
-  - SHOW_PASSWORD_HINT=false
+  # General Settings
+  DOMAIN: "https://vaultwarden.ai4infra.internal"
+  SIGNUPS_ALLOWED: "true"   # 초기 구성 후 false로 변경 권장
+  INVITATIONS_ALLOWED: "true"
   
-  # Logging
-  - LOG_LEVEL=warn
-  - EXTENDED_LOGGING=true
+  # Security
+  ROCKET_ADDRESS: "0.0.0.0"
+  ROCKET_PORT: "80"  # 컨테이너 내부 포트 (외부 노출 X)
+
+  # Database (Internal Postgres)
+  # 템플릿: postgresql://<user>:<password>@<host>:<port>/<database>
+  # 주의: 비밀번호는 여기 적지 않고 install 시점에 주입하거나 .env.local 사용 권장
+  # 하지만 편의상 기본값 명시 (운영 시 변경 필요)
+  # DATABASE_URL: "postgresql://postgres:postgres@ai4infra-postgres:5432/vaultwarden"
 
 compose_vars:
-  - PORT=8080      # Host Port (Reverse Proxy로 연결됨)
+  VAULTWARDEN_MEM_LIMIT: "256m"
+  VAULTWARDEN_PORT: "8080" # Host Port (Direct Access 용, 보통은 Nginx만 사용)

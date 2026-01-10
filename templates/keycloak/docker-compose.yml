@@ -1,0 +1,26 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0.0
+    container_name: ai4infra-keycloak
+    restart: unless-stopped
+    env_file: [.env]
+    command: start --http-enabled=true --proxy=edge --import-realm
+    environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
+      - KC_DB_PASSWORD=${KEYCLOAK_DB_PASSWORD}
+      # Other envs injected from config/keycloak.yml
+    
+    mem_limit: ${KEYCLOAK_MEM_LIMIT:-1g}
+    
+    # Nginx Proxy only
+    # ports:
+    #   - "${KEYCLOAK_PORT:-8080}:8080"
+    
+    networks:
+      - ai4infra
+
+networks:
+  ai4infra:
+    external: true
+    name: ai4infra

@@ -56,7 +56,10 @@ def extract_config_vars(service: str) -> dict:
 
     def sub_vars(v):
         if isinstance(v, str):
-            return v.replace("${PROJECT_ROOT}", PROJECT_ROOT).replace("${BASE_DIR}", BASE_DIR)
+            # 1. 고정 경로 치환
+            v = v.replace("${PROJECT_ROOT}", PROJECT_ROOT).replace("${BASE_DIR}", BASE_DIR)
+            # 2. 환경변수 치환 (.env 로드됨)
+            return os.path.expandvars(v)
         if isinstance(v, dict):
             return {k: sub_vars(val) for k, val in v.items()}
         if isinstance(v, list):
@@ -67,47 +70,28 @@ def extract_config_vars(service: str) -> dict:
 
 def generate_env(service: str) -> str:
 
-    # 1) 기본 변수 추출
-    env_vars = extract_env_vars(".env", service)
-    config_vars = extract_config_vars(service)
+    # 1) 변수 수집 (.env < compose_vars < env_vars)
+    # .env 파일의 변수를 기본으로 하되, YAML 설정이 덮어쓰도록 구성
+    base_env = extract_env_vars(".env", service)
+    config = extract_config_vars(service)
+    
+    # compose_vars: docker-compose에서 사용할 변수 (예: PORT, VERSION)
+    compose_vars = config.get("compose_vars", {})
+    if not isinstance(compose_vars, dict): compose_vars = {}
 
-    # 2) config_vars에서 환경변수 후보만 필터링
-    exclude_keys = {"path", "permissions", "tls"}
-    config_env_vars = {
-        k: v for k, v in config_vars.items()
-        if k not in exclude_keys and not isinstance(v, dict)
-    }
+    # env_vars: 컨테이너 내부에 주입될 환경변수 (예: VAULT_ADDR)
+    container_env = config.get("env_vars", {})
+    if not isinstance(container_env, dict): container_env = {}
 
-    # 3) env_vars 섹션이 있으면 그 내용을 추가
-    if "env_vars" in config_vars and isinstance(config_vars["env_vars"], dict):
-        config_env_vars.update(config_vars["env_vars"])
+    # 병합 (순서 중요: 뒤에 오는 것이 덮어씀)
+    merged = {**base_env, **compose_vars, **container_env}
 
-    # 병합: .env > config_ENV > path→DATA_DIR 변환 변수
-    merged = {**env_vars, **config_env_vars}
-
-    # 3) path.* → DATA_DIR / CERTS_DIR / CONF_DIR 자동 생성
-    # [변경] YAML에 정의되지 않았으면, 시스템 표준 경로(defaults)를 강제 적용
-    paths = config_vars.get("path", {})
-    directories = paths.get("directories", {})
-    files = paths.get("files", {})
-
-    # (1) data -> DATA_DIR
-    # YAML에 있으면 그 값, 없으면 ${BASE_DIR}/${service}/data
-    merged["DATA_DIR"] = directories.get("data", f"{BASE_DIR}/{service}/data")
-
-    # (2) config -> CONF_DIR
-    # YAML에 있으면 그 값, 없으면 ${BASE_DIR}/${service}/config
-    merged["CONF_DIR"] = directories.get("config", f"{BASE_DIR}/{service}/config")
-        
-    # (3) certs & keys -> CERTS_DIR
-    # YAML에 'path.directories.certs'가 명시되어 있으면 우선 사용
-    if "certs" in directories:
-        merged["CERTS_DIR"] = directories["certs"]
-    else:
-        # 없으면 기본값: ${BASE_DIR}/${service}/certs
-        # (단, 구 하위호환성을 위해 files['private_key'] 경로 체크 로직은 제거하거나 후순위로 둠.
-        #  현재 정책상 무조건 certs 디렉터리로 통합 관리)
-        merged["CERTS_DIR"] = f"{BASE_DIR}/{service}/certs"
+    # 2) 필수 경로 변수 자동 주입 (System Standard)
+    # YAML의 path 설정과 관계없이 표준 경로를 강제하여 복잡도 제거
+    service_home = f"{BASE_DIR}/{service}"
+    merged["DATA_DIR"] = f"{service_home}/data"
+    merged["CONF_DIR"] = f"{service_home}/config"
+    merged["CERTS_DIR"] = f"{service_home}/certs"
 
     # 4) 저장할 디렉터리
     service_dir = Path(f"{BASE_DIR}/{service}")
@@ -135,7 +119,7 @@ def generate_env(service: str) -> str:
             check=True, capture_output=True, text=True
         )
 
-        owner = "bitwarden" if service == "bitwarden" else "root"
+        owner = "root"
         subprocess.run(
             ["sudo", "chown", f"{owner}:{owner}", str(output_file)],
             check=True, capture_output=True, text=True

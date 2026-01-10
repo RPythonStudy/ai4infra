@@ -3,13 +3,10 @@
   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
   "python.terminal.activateEnvironment": true,
   "terminal.integrated.inheritEnv": true,
-
-
-
+  "terminal.integrated.defaultProfile.windows": "Ubuntu-24.04 (WSL)",
   // R 실행 경로 고정 (rig로 설치된 기본 R)
   "r.rterm.linux": "/usr/local/bin/R",
   "r.alwaysUseActiveTerminal": true,
-
   // 편의 설정: R 확장에서 Session 시작 시 .Renviron 로드 보장
   "r.source.encoding": "UTF-8",
   "r.rpath.linux": "/usr/local/bin/R",

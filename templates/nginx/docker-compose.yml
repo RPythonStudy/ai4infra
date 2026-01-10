@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  nginx:
+    image: nginx:1.24-alpine
+    container_name: ai4infra-nginx
+    restart: unless-stopped
+
+    # 리소스 제한 (경량화)
+    mem_limit: ${NGINX_MEM_LIMIT:-128m}
+
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+
+    networks:
+      - ai4infra
+
+    volumes:
+      # 설정 파일 마운트
+      - ${CONFIG_DIR:-/opt/ai4infra/nginx/config}/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${CONFIG_DIR:-/opt/ai4infra/nginx/config}/conf.d:/etc/nginx/conf.d:ro
+
+      # 인증서 마운트 (모든 서비스의 인증서를 모아서 관리하거나, Gateway용 전용 인증서 사용)
+      # 현재 전략: Gateway는 자신만의 wildcard 인증서를 가지거나, 각 서비스 도메인별 인증서를 가짐.
+      # 초기에는 /certs 폴더 전체를 마운트하여 유연성 확보.
+      - ${CERTS_DIR:-/opt/ai4infra/nginx/certs}:/etc/nginx/certs:ro
+
+      # 로그 (호스트와 공유)
+      - ${LOGS_DIR:-/opt/ai4infra/nginx/logs}:/var/log/nginx
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+networks:
+  ai4infra:
+    external: true
+    name: ai4infra
