@@ -60,10 +60,10 @@ app = typer.Typer(help="AI4INFRA 서비스 관리")
 def generate_rootca():
     generate_root_ca_if_needed()
 
-def _ensure_postgres_db(db_name="keycloak", db_user="keycloak"):
+def _ensure_postgres_db(db_name="keycloak", db_user="keycloak", env_password_key="KEYCLOAK_DB_PASSWORD"):
     """
-    운영 중인 Postgres에 Keycloak DB/User가 없으면 자동 생성.
-    (비밀번호는 .env의 KEYCLOAK_DB_PASSWORD 참조)
+    운영 중인 Postgres에 DB/User가 없으면 자동 생성.
+    (비밀번호는 .env의 env_password_key 참조)
     """
     log_info(f"[_ensure_postgres_db] {db_name} 데이터베이스 확인 중...")
     
@@ -88,7 +88,7 @@ def _ensure_postgres_db(db_name="keycloak", db_user="keycloak"):
 
     # 3. DB 및 User 생성
     log_info(f"[_ensure_postgres_db] {db_name} DB 생성 시작...")
-    pw = os.getenv("KEYCLOAK_DB_PASSWORD", "keycloak")
+    pw = os.getenv(env_password_key, db_user)
     
     create_cmds = [
         f"CREATE USER {db_user} WITH PASSWORD '{pw}';",
@@ -123,10 +123,12 @@ def install(
     for svc in services:
         service_dir = f"{BASE_DIR}/{svc}"
 
-        # [Keycloak 전처리] DB 준비 (컨테이너 중지 전에 수행해야 함 -> 하지만 install은 보통 중지 후 복사)
-        # 하지만 Postgres는 다른 서비스이므로 중지되지 않음. (svc=keycloak일 때 postgres는 살아있음)
+        # [Keycloak 전처리] DB 준비
         if svc == "keycloak":
-             _ensure_postgres_db()
+             _ensure_postgres_db(db_name="keycloak", db_user="keycloak", env_password_key="KEYCLOAK_DB_PASSWORD")
+        # [Orthanc 전처리] DB 준비
+        elif svc == "orthanc":
+             _ensure_postgres_db(db_name="orthanc", db_user="orthanc", env_password_key="ORTHANC_DB_PASSWORD")
 
         # 1) 컨테이너 중지
         stop_container(f"ai4infra-{svc}")
@@ -158,9 +160,20 @@ def install(
         # 7) 컨테이너 시작
         start_container(svc)
 
-        # [Keycloak 후처리] Nginx Reload (새로운 conf 반영)
-        if svc == "keycloak":
-             log_info("[install] Nginx 설정을 반영하기 위해 Nginx 재시작...")
+        # [Post-Install] Nginx 설정 파일 복사 및 Reload
+        nginx_conf_src = f"{PROJECT_ROOT}/templates/nginx/config/conf.d/{svc}.conf"
+        nginx_conf_dest = f"{BASE_DIR}/nginx/config/conf.d/{svc}.conf"
+        
+        if os.path.exists(nginx_conf_src) and check_container("nginx"):
+            log_info(f"[install] Nginx 설정 복사: {svc}.conf")
+            # 대상 폴더가 없을 수도 있으니(nginx 미설치 시) 체크하되, nginx 컨테이너가 있으면 폴더도 있을 것임.
+            subprocess.run(["sudo", "cp", nginx_conf_src, nginx_conf_dest], check=False)
+            
+            log_info(f"[install] {svc} 반영을 위해 Nginx 재시작...")
+            subprocess.run(["sudo", "docker", "restart", "ai4infra-nginx"], check=False)
+        elif svc in ["keycloak", "orthanc"] and check_container("nginx"):
+             # 설정 파일이 없더라도 강제 리로드 필요 시 (예: 기존 파일 수정)
+             log_info(f"[install] {svc} 반영을 위해 Nginx 재시작...")
              subprocess.run(["sudo", "docker", "restart", "ai4infra-nginx"], check=False)
 
         # -----------------------------
@@ -179,6 +192,8 @@ def install(
             check_container("filebeat")
         elif svc == "keycloak":
              check_container("keycloak")
+        elif svc == "orthanc":
+             check_container("orthanc")
         else:
             check_container(svc)  # 기본 점검
 

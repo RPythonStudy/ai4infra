@@ -67,5 +67,11 @@ install-keycloak:
 install-keycloak--reset:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install keycloak --reset
 
+install-orthanc:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install orthanc
+
+install-orthanc--reset:
+	$(shell which python) scripts/ai4infra/ai4infra-cli.py install orthanc --reset
+
 install-all:
 	$(shell which python) scripts/ai4infra/ai4infra-cli.py install all
