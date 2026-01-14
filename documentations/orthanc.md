@@ -47,30 +47,31 @@
 - **Gateway**: Nginx 리버스 프록시
 - **Viewer**: OHIF Viewer 플러그인
 
-### 🔐 Custom Entrypoint Strategy
-환경변수 기반 동적 설정을 위해 Custom Entrypoint 사용:
-- **Template**: `orthanc.json` (플레이스홀더 포함)
-- **Script**: `entrypoint.sh` (sed로 런타임 치환)
-- **Variables**: DB명, AET, 비밀번호 등
+### 4.2 Native Environment Substitution
+과거에는 `entrypoint.sh`와 `sed`를 사용하여 환경변수를 설정 파일에 주입했으나, 최신 Orthanc(1.5.0+)의 **Native Environment Substitution** 기능을 활용하여 구조를 단순화했습니다.
+
+1.  **JSON Template**: `${VAR_NAME}` 문법을 그대로 사용합니다.
+2.  **Docker Compose**: `.env` 파일을 통해 환경변수를 컨테이너에 전달합니다.
+3.  **No Scripts**: 별도의 `entrypoint.sh` 없이 Orthanc가 직접 설정 파일을 읽습니다.
+
+**보안 이점:**
+비밀번호(DB Password 등)가 파일 시스템(`/tmp/config`)에 평문으로 저장되지 않고, 오직 프로세스 메모리 내에서만 치환되어 보안성이 향상됩니다.
 
 ---
 
 ## 2. Installation
 
-### 기본 서비스 (Single Instance)
+### 3-Tier PACS Stack (Standard)
 ```bash
-make install-orthanc
+make install-pacs-stack
 ```
 
-### Multi-Instance (3-Tier)
+### Individual Service
 ```bash
 # 개별 설치
 python scripts/ai4infra/ai4infra-cli.py install orthanc-mock
 python scripts/ai4infra/ai4infra-cli.py install orthanc-raw
 python scripts/ai4infra/ai4infra-cli.py install orthanc-pseudo
-
-# 또는 Makefile 타겟 추가 후 일괄 설치 (예정)
-# make install-pacs-stack
 ```
 
 **자동 처리 사항**:
@@ -94,17 +95,43 @@ ORTHANC_AET=ORTHANC          # 기본
 ORTHANC_DB_NAME=orthanc      # 기본
 ```
 
+### 3.1 AETitle Configuration (DicomAet)
+> **중요**: Orthanc 자신의 AETitle을 설정할 때는 `AETitle`이 아닌 **`DicomAet`** 키를 사용해야 합니다. (`AETitle`은 원격 장비를 정의할 때 사용됨)
+
+- **설정 위치**: `config/<service>.yml`
+- **적용 원리**: 
+    1. 사용자가 `yml` 파일에 `ORTHANC_AET` 변수를 정의합니다.
+    2. `docker-compose`가 이를 컨테이너의 환경변수로 주입합니다.
+    3. **Orthanc Native Substitution**: Orthanc(1.5.0+)가 `orthanc.json`의 `${ORTHANC_AET}` 구문을 스스로 해석하여 적용합니다. (별도의 entrypoint 스크립트 불필요)
+
+**설정 예시 (`config/orthanc-mock.yml`):**
+```yaml
+entry_vars:
+  ORTHANC_AET: "MOCK_PACS" # 밑줄(_) 사용 가능
+  ORTHANC__NAME: "AI4INFRA MOCK PACS"
+```
+
+**템플릿 예시 (`templates/orthanc-mock/orthanc.json`):**
+```json
+{
+    "Name": "${ORTHANC__NAME}",
+    "DicomAet": "${ORTHANC_AET}",  // <-- Critical: Use "DicomAet", not "AETitle"
+    ...
+}
+```
+
 ### Service Config (`config/orthanc-*.yml`)
 각 서비스는 독립된 설정 파일을 가집니다:
-- `orthanc.yml` (기본)
 - `orthanc-mock.yml` (Mock PACS)
 - `orthanc-raw.yml` (Raw PACS)
 - `orthanc-pseudo.yml` (Pseudo PACS)
+*(orthanc.yml for single instance has been removed)*
 
 **주요 설정**:
 ```yaml
 env_vars:
-  ORTHANC_AET: "MOCK_PACS"        # Application Entity Title
+  ORTHANC_AET: "MOCK_PACS"        # [DICOM] 통신용 ID (중요)
+  ORTHANC__NAME: "My Hospital"    # [WEB] 브라우저 상단 표시 이름 (장식용)
   ORTHANC_DB_NAME: "orthanc_mock" # Database name
   ORTHANC__POSTGRESQL__DATABASE: "orthanc_mock"
 
@@ -211,3 +238,9 @@ python scripts/ai4infra/ai4infra-cli.py install dcmtk
 ### `HTTP 404 Not Found` (Nginx)
 - **원인**: Nginx 설정 파일(`orthanc.conf`)이 컨테이너에 없거나 오타.
 - **해결**: `make install-orthanc`를 다시 실행하여 설정 파일을 복사하고 Nginx 리로드.
+
+---
+
+## 9. References
+- **Official Configuration Guide**: [The Orthanc Book - Configuration](https://orthanc.uclouvain.be/book/users/configuration.html)
+- **DICOM AETitle**: [The Orthanc Book - DicomAet](https://orthanc.uclouvain.be/book/users/configuration.html#dicomaet)

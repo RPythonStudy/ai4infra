@@ -1,65 +1,42 @@
-version: "3.9"
-
 services:
-  # 1. OpenLDAP Server
-  openldap:
+  ldap:
     image: osixia/openldap:1.5.0
     container_name: ai4infra-ldap
-    restart: unless-stopped
-    command: --copy-service
-
-    mem_limit: ${LDAP_MEM_LIMIT:-256m}
-
+    hostname: ldap
+    environment:
+      LDAP_ORGANISATION: "${LDAP_ORGANISATION}"
+      LDAP_DOMAIN: "${LDAP_DOMAIN}"
+      LDAP_ADMIN_PASSWORD: "${LDAP_ADMIN_PASSWORD}"
+      LDAP_TLS_CRT_FILENAME: "ldap.crt"
+      LDAP_TLS_KEY_FILENAME: "ldap.key"
+      LDAP_TLS_CA_CRT_FILENAME: "ca.crt"
+      LDAP_TLS_VERIFY_CLIENT: "try"
+    volumes:
+      - ./data/database:/var/lib/ldap
+      - ./data/config:/etc/ldap/slapd.d
+      - ./certs:/container/service/slapd/assets/certs
     ports:
-      - "${LDAP_PORT:-389}:389"   # LDAP (Plain/StartTLS)
-      - "${LDAPS_PORT:-636}:636"  # LDAPS (SSL)
-
+      - "${LDAP_PORT:-389}:389"
+      - "${LDAP_SSL_PORT:-636}:636"
     networks:
       - ai4infra
+    command: --copy-service
+    restart: unless-stopped
 
-    volumes:
-      # Data Persistence
-      - /opt/ai4infra/ldap/data:/var/lib/ldap
-      - /opt/ai4infra/ldap/config:/etc/ldap/slapd.d
-      
-      # TLS Certs (공통 인증서 사용 시)
-      - /opt/ai4infra/ldap/certs:/container/service/slapd/assets/certs
-
-    environment:
-      - LDAP_ORGANISATION=${LDAP_ORGANISATION:-AI4INFRA}
-      - LDAP_DOMAIN=${LDAP_DOMAIN:-ai4infra.internal}
-      
-      # Admin Passwords (Subject to .env injection)
-      - LDAP_ADMIN_PASSWORD=${LDAP_ADMIN_PASSWORD}
-      - LDAP_CONFIG_PASSWORD=${LDAP_CONFIG_PASSWORD}
-      
-      # TLS Settings (Auto-generated certificates use these paths)
-      - LDAP_TLS_CRT_FILENAME=certificate.crt
-      - LDAP_TLS_KEY_FILENAME=private.key
-      - LDAP_TLS_CA_CRT_FILENAME=rootCA.crt
-      - LDAP_TLS_VERIFY_CLIENT=try
-
-  # 2. phpLDAPadmin (Web UI)
   phpldapadmin:
     image: osixia/phpldapadmin:0.9.0
     container_name: ai4infra-ldap-admin
-    restart: unless-stopped
-
-    mem_limit: ${ADMIN_MEM_LIMIT:-128m}
-
-    # Nginx Proxy only (No direct port exposure)
-    # ports:
-    #   - "8081:80"
-
+    hostname: ldap-admin
+    environment:
+      PHPLDAPADMIN_LDAP_HOSTS: "ldap"
+      PHPLDAPADMIN_HTTPS: "false"
+    ports:
+      - "${LDAP_ADMIN_PORT:-8081}:80"
     networks:
       - ai4infra
-
-    environment:
-      - PHPLDAPADMIN_LDAP_HOSTS=ai4infra-ldap
-      - PHPLDAPADMIN_HTTPS=false
-
     depends_on:
-      - openldap
+      - ldap
+    restart: unless-stopped
 
 networks:
   ai4infra:

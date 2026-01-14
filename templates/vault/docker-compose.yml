@@ -21,6 +21,7 @@ services:
       - ${DATA_DIR:-/opt/ai4infra/vault/file}:/vault/file
       - ${CERTS_DIR:-/opt/ai4infra/vault/certs}:/vault/certs
       - ${CONF_DIR:-/opt/ai4infra/vault/config}:/vault/config
+      - ${USB_DIR:-/mnt/usb}:/mnt/usb:ro # [SEC-06] Auto-Unseal Simulation
 
     command: >
       sh -c "

@@ -51,3 +51,8 @@ Thumbs.db
 # ── 도커 ───────────────────────────────────────────────────────────────
 docker/mock_usb/
 mock_usb/
+
+# Apps (Plugins)
+apps/
+vault_keys.json
+usb/

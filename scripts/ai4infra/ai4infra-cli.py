@@ -41,6 +41,7 @@ from common.load_config import load_config
 
 # env manager
 from utils.container.env_manager import generate_env
+from utils.container.nginx_manager import setup_nginx_for_service
 # -------------------------------------------------------------
 # 인증서 모듈 (기존 유지, 한 줄씩)
 # -------------------------------------------------------------
@@ -74,7 +75,7 @@ def _ensure_postgres_db(db_name="keycloak", db_user="keycloak", env_password_key
 
     # 2. DB 존재 여부 확인
     check_db_cmd = [
-        "sudo", "docker", "exec", "ai4infra-postgres",
+        "docker", "exec", "ai4infra-postgres",
         "psql", "-U", "postgres", "-lqt"
     ]
     try:
@@ -92,7 +93,7 @@ def _ensure_postgres_db(db_name="keycloak", db_user="keycloak", env_password_key
     
     # 3-1. User 생성 (이미 존재할 수 있음 -> 에러 무시)
     cmd_user = [
-        "sudo", "docker", "exec", "ai4infra-postgres",
+        "docker", "exec", "ai4infra-postgres",
         "psql", "-U", "postgres", "-c", f"CREATE USER {db_user} WITH PASSWORD '{pw}';"
     ]
     try:
@@ -110,7 +111,7 @@ def _ensure_postgres_db(db_name="keycloak", db_user="keycloak", env_password_key
     
     for sql in create_cmds:
         cmd = [
-            "sudo", "docker", "exec", "ai4infra-postgres",
+            "docker", "exec", "ai4infra-postgres",
             "psql", "-U", "postgres", "-c", sql
         ]
         try:
@@ -156,7 +157,7 @@ def install(
         # 2) 데이터 처리
         if reset:
             log_info(f"[install] --reset 모드: {svc} 서비스폴더 삭제진행")
-            subprocess.run(["sudo", "rm", "-rf", service_dir], capture_output=True, text=True)
+            subprocess.run(["rm", "-rf", service_dir], capture_output=True, text=True)
             log_info(f"[install] {service_dir} 삭제 완료")
 
         else:
@@ -180,21 +181,8 @@ def install(
         # 7) 컨테이너 시작
         start_container(svc)
 
-        # [Post-Install] Nginx 설정 파일 복사 및 Reload
-        nginx_conf_src = f"{PROJECT_ROOT}/templates/nginx/config/conf.d/{svc}.conf"
-        nginx_conf_dest = f"{BASE_DIR}/nginx/config/conf.d/{svc}.conf"
-        
-        if os.path.exists(nginx_conf_src) and check_container("nginx"):
-            log_info(f"[install] Nginx 설정 복사: {svc}.conf")
-            # 대상 폴더가 없을 수도 있으니(nginx 미설치 시) 체크하되, nginx 컨테이너가 있으면 폴더도 있을 것임.
-            subprocess.run(["sudo", "cp", nginx_conf_src, nginx_conf_dest], check=False)
-            
-            log_info(f"[install] {svc} 반영을 위해 Nginx 재시작...")
-            subprocess.run(["sudo", "docker", "restart", "ai4infra-nginx"], check=False)
-        elif (svc == "keycloak" or svc.startswith("orthanc")) and check_container("nginx"):
-             # 설정 파일이 없더라도 강제 리로드 필요 시 (예: 기존 파일 수정)
-             log_info(f"[install] {svc} 반영을 위해 Nginx 재시작...")
-             subprocess.run(["sudo", "docker", "restart", "ai4infra-nginx"], check=False)
+        # [Post-Install] Nginx 통합 (인증서, 설정, 리로드)
+        setup_nginx_for_service(svc)
 
         # -----------------------------
         # 설치 후 자동 점검 단계 추가
@@ -231,7 +219,7 @@ def install(
 
             if Path(override_src).exists():
                 subprocess.run(
-                    ["sudo", "cp", "-a", override_src, override_dst],
+                    ["cp", "-a", override_src, override_dst],
                     check=True
                 )
                 log_info(f"[install] TLS override 적용 완료 → {override_dst}")
@@ -399,7 +387,7 @@ def init_vault():
 
     # 1) Vault 컨테이너 실행 확인
     result = subprocess.run(
-        ['sudo', 'docker', 'ps', '--filter', 'name=ai4infra-vault', '--format', '{{.Names}}'],
+        ['docker', 'ps', '--filter', 'name=ai4infra-vault', '--format', '{{.Names}}'],
         capture_output=True, text=True
     )
 
@@ -425,7 +413,7 @@ def init_vault():
     # 3) Vault init 실행
     # 3) Vault init 실행
     init_cmd = [
-        'sudo', 'docker', 'exec', '-i', 
+        'docker', 'exec', '-i', 
         '-e', 'VAULT_ADDR=https://127.0.0.1:8200',  # [Fix] TLS 인증서 IP 불일치 해결
         'ai4infra-vault',
         'vault', 'operator', 'init',
@@ -479,7 +467,7 @@ def _execute_unseal_vault(interactive: bool = False):
     interactive=True일 경우 사용자에게 수동 입력 안내 메시지를 출력합니다.
     """
     status_cmd = [
-        'sudo', 'docker', 'exec', 
+        'docker', 'exec', 
         '-e', 'VAULT_ADDR=https://127.0.0.1:8200',
         'ai4infra-vault',
         'vault', 'status', '-format=json'
@@ -536,7 +524,7 @@ def _execute_unseal_vault(interactive: bool = False):
                 for i, key in enumerate(unseal_keys[:threshold]):
                     log_info(f"[unseal_vault] Key #{i+1} 입력 중...")
                     cmd = [
-                        'sudo', 'docker', 'exec', 
+                        'docker', 'exec', 
                         '-e', 'VAULT_ADDR=https://127.0.0.1:8200',  # [Fix] TLS 인증서 IP 불일치 해결
                         'ai4infra-vault',
                         'vault', 'operator', 'unseal', key
@@ -578,7 +566,7 @@ def _execute_unseal_vault(interactive: bool = False):
         print("-------------------------------------------------------------------\n")
 
         print("1) Vault 컨테이너 내부로 들어가기:")
-        print("   sudo docker exec -it ai4infra-vault /bin/sh\n")
+        print("   docker exec -it ai4infra-vault /bin/sh\n")
 
         print("2) Vault 언실 명령 실행:")
         print("   vault operator unseal\n")
@@ -617,7 +605,7 @@ def setup_vault_base():
     log_info("[setup_vault_base] Vault 기본 구성 시작")
 
     base_cmd = [
-        'sudo', 'docker', 'exec', 
+        'docker', 'exec', 
         '-e', 'VAULT_ADDR=https://127.0.0.1:8200', 
         'ai4infra-vault',
         'vault'
@@ -660,8 +648,8 @@ def setup_vault_base():
     try:
         log_info("3) Audit Device (file) 활성화 확인...")
         # 로그 파일 권한 문제 방지를 위해 먼저 파일 생성 시도 (optional)
-        subprocess.run(['sudo', 'docker', 'exec', 'ai4infra-vault', 'touch', '/vault/logs/audit.log'], check=False)
-        subprocess.run(['sudo', 'docker', 'exec', 'ai4infra-vault', 'chmod', '666', '/vault/logs/audit.log'], check=False)
+        subprocess.run(['docker', 'exec', 'ai4infra-vault', 'touch', '/vault/logs/audit.log'], check=False)
+        subprocess.run(['docker', 'exec', 'ai4infra-vault', 'chmod', '666', '/vault/logs/audit.log'], check=False)
 
         subprocess.run(
             base_cmd + ['audit', 'enable', 'file', 'file_path=/vault/logs/audit.log'],
@@ -715,7 +703,7 @@ def clean_backups(service: str = typer.Argument("all", help="백업을 삭제할
         log_info(f"[clean_backups] 삭제 중: {target_path}")
         try:
             # 디렉터리 자체를 삭제 (backup 시 mkdir -p로 재생성됨)
-            subprocess.run(['sudo', 'rm', '-rf', target_path], check=True)
+            subprocess.run(['rm', '-rf', target_path], check=True)
             log_info(f"[clean_backups] {t} 삭제 완료")
         except subprocess.CalledProcessError as e:
             log_error(f"[clean_backups] {t} 삭제 실패: {e}")
@@ -800,8 +788,8 @@ def setup_cron():
         # 로그 파일 권한 확인 (User가 쓸 수 있도록)
         log_dir = "/var/log/ai4infra"
         if not os.path.exists(log_dir):
-            subprocess.run(["sudo", "mkdir", "-p", log_dir])
-            subprocess.run(["sudo", "chmod", "777", log_dir]) # 임시 (실 운영시 더 정교한 권한 필요)
+            subprocess.run(["mkdir", "-p", log_dir])
+            subprocess.run(["chmod", "777", log_dir]) # 임시 (실 운영시 더 정교한 권한 필요)
             
     except subprocess.CalledProcessError as e:
         log_error(f"[setup_cron] Crontab 등록 실패: {e.stderr}")

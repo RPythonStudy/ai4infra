@@ -1,77 +1,135 @@
+PYTHON = ./.venv/bin/python
+
 generate-rootca:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py generate-rootca
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py generate-rootca
+
+install-rootca-windows:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install-rootca-windows
 
 setup-vault:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py setup-vault-base
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py setup-vault-base
 
 setup-cron:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py setup_cron
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py setup_cron
 
 install-postgres:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install postgres
 
 install-postgres--reset:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install postgres --reset
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install postgres --reset
 
 backup-postgres:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py backup postgres
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py backup postgres
 
 restore-postgres:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py restore postgres
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py restore postgres
 
 install-nginx:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install nginx
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install nginx
 
 install-nginx--reset:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install nginx --reset
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install nginx --reset
+
+verify-nginx-security: ## Verify WAF and Immutable FS
+	$(PYTHON) scripts/ai4infra/verify_nginx_security.py
 
 install-vaultwarden:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install vaultwarden
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install vaultwarden
 
 install-vaultwarden--reset:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install vaultwarden --reset
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install vaultwarden --reset
 
 install-ldap:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install ldap
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install ldap
 
 install-ldap--reset:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install ldap --reset
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install ldap --reset
 
 install-elk:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install elk
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install elk
 
 install-elk--reset:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install elk --reset
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install elk --reset
 
 install-vault:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install vault
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install vault
 
 install-vault--reset:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install vault --reset
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install vault --reset
 
 init-vault:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py init-vault
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py init-vault
 
 unseal-vault:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py unseal-vault
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py unseal-vault
 
 backup-vault:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py backup vault
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py backup vault
 
 restore-vault:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py restore vault
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py restore vault
 
 install-keycloak:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install keycloak
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install keycloak
 
 install-keycloak--reset:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install keycloak --reset
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install keycloak --reset
 
-install-orthanc:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install orthanc
+setup-keycloak: ## Configure Realm/LDAP/Clients
+	$(PYTHON) scripts/ai4infra/keycloak_setup.py
 
-install-orthanc--reset:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install orthanc --reset
+seed-users: ## Seed initial users into LDAP
+	$(PYTHON) scripts/ai4infra/seed_users.py
+
+install-orthanc-mock:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install orthanc-mock
+
+install-orthanc-mock--reset:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install orthanc-mock --reset
+
+install-pacs-stack:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install orthanc-mock
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install orthanc-raw
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install orthanc-pseudo
+
+install-pacs-stack--reset:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install orthanc-mock --reset
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install orthanc-raw --reset
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install orthanc-pseudo --reset
+
+install-dcmtk:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install dcmtk
+
+install-dcmtk--reset:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install dcmtk --reset
+
+install-slicer:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install slicer
+
+install-slicer--reset:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install slicer --reset
+
+install-redis:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install redis
+
+install-redis--reset:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install redis --reset
+
+install-openrem:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install openrem
+
+install-openrem--reset:
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install openrem --reset
 
 install-all:
-	$(shell which python) scripts/ai4infra/ai4infra-cli.py install all
+	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install all
+
+# --- Testing ---
+test: ## Run automated tests and generate report
+	@./.venv/bin/python scripts/ai4infra/test_runner.py
+
+test-integration: ## Run PACS integration tests using DCMTK
+	@./.venv/bin/python -m pytest tests/integration/test_pacs_workflow.py
+
+test-security: ## Run security implementation verification tests
+	@./.venv/bin/python -m pytest tests/security/

@@ -1,15 +1,17 @@
 service:
-  enable: true
+  enable: ${ORTHANC_MOCK_ENABLED}
 
-env_vars:
+entry_vars:
   # Entrypoint Helpers
+  # [Why Explicit?] Orthanc는 환경변수를 직접 읽지 못합니다.
+  # 따라서 여기서 변수를 매핑해주어야 entrypoint 스크립트가 orthanc.json에 값을 주입할 수 있습니다.
   ORTHANC_ADMIN_PASSWORD: "${ORTHANC_ADMIN_PASSWORD}"
   ORTHANC_DB_PASSWORD: "${ORTHANC_DB_PASSWORD}"
   ORTHANC_AET: "MOCK_PACS"
   ORTHANC_DB_NAME: "orthanc_mock"
 
   # General
-  ORTHANC__NAME: "Hospital Mock PACS"
+  ORTHANC__NAME: "AI4INFRA MOCK PACS"
   # JSON Format for Users: { "username": "password" }
   ORTHANC__REGISTERED_USERS: |
     { "admin": "${ORTHANC_ADMIN_PASSWORD}" }

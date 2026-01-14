@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ai4infra-dcmtk:latest
+    image: ai4infra-dcmtk:${DCMTK_VERSION:-3.6.7}
     container_name: ai4infra-dcmtk
     hostname: dcmtk
     networks:

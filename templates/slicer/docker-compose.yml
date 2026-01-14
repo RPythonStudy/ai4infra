@@ -1,0 +1,20 @@
+services:
+  slicer:
+    image: slicer/slicer-base:5.6
+    container_name: ai4infra-slicer
+    ports:
+      - "${SLICER_PORT}:8080"
+    volumes:
+      - ./data:/home/slicer/data
+    deploy:
+      resources:
+        limits:
+          memory: ${SLICER_MEM_LIMIT}
+    restart: unless-stopped
+    networks:
+      - ai4infra
+
+networks:
+  ai4infra:
+    external: true
+    name: ai4infra

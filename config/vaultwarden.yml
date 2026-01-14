@@ -1,5 +1,5 @@
 service:
-  enable: true
+  enable: ${VAULTWARDEN_ENABLED}
 
 
 backup:
@@ -25,3 +25,6 @@ env_vars:
 compose_vars:
   VAULTWARDEN_MEM_LIMIT: "256m"
   VAULTWARDEN_PORT: "8080" # Host Port (Direct Access 용, 보통은 Nginx만 사용)
+  DOMAIN: "https://vaultwarden.ai4infra.internal"
+  SIGNUPS_ALLOWED: "true"
+  ADMIN_TOKEN: "admin_token_change_me" # .env로 이동 권장

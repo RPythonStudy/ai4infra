@@ -3,13 +3,20 @@
         "/usr/share/orthanc/plugins",
         "/usr/local/share/orthanc/plugins"
     ],
-    "Name": "AI4INFRA Orthanc",
-    "AETitle": "${ORTHANC_AET}",
+    "Name": "${ORTHANC__NAME}",
+    "DicomAet": "${ORTHANC_AET}",
     "StorageDirectory": "/var/lib/orthanc/db",
     "IndexDirectory": "/var/lib/orthanc/db",
     "HttpPort": 8042,
     "DicomPort": 4242,
     "AuthenticationEnabled": true,
+    "Oidc": {
+        "Enable": true,
+        "ClientId": "orthanc",
+        "ClientSecret": "orthanc-secret",
+        "DiscoveryUrl": "http://ai4infra-keycloak:8080/realms/ai4infra/.well-known/openid-configuration",
+        "UserProperty": "preferred_username"
+    },
     "RemoteAccessAllowed": true,
     // Default user (overridden by env var)
     "RegisteredUsers": {
@@ -22,12 +29,25 @@
     "Ohif": {
         "DataSource": "dicom-web"
     },
+    // Peer Definition for 3-Tier PACS
+    "DicomModalities": {
+        "MOCK_PACS": [
+            "MOCK_PACS",
+            "ai4infra-orthanc-mock",
+            4242
+        ],
+        "PSEUDO_PACS": [
+            "PSEUDO_PACS",
+            "ai4infra-orthanc-pseudo",
+            4242
+        ]
+    },
     "PostgreSQL": {
         "EnableIndex": true,
-        "EnableStorage": false,
+        "EnableStorage": true,
         "Host": "ai4infra-postgres",
         "Port": 5432,
-        "Database": "__DB_NAME__",
+        "Database": "${ORTHANC_DB_NAME}",
         "Username": "orthanc",
         "Password": "${ORTHANC_DB_PASSWORD}"
     }

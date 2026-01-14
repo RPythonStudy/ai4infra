@@ -18,7 +18,7 @@ def stop_container(search_pattern: str) -> bool:
     """name 필터 패턴으로 일치하는 Docker 컨테이너를 중지"""
 
     cmd = [
-        'sudo', 'docker', 'ps',
+        'docker', 'ps',
         '--filter', f'name={search_pattern}',
         '--format', '{{.Names}}'
     ]
@@ -33,7 +33,7 @@ def stop_container(search_pattern: str) -> bool:
         return True
 
     for c in containers:
-        result = subprocess.run(['sudo', 'docker', 'stop', c], capture_output=True, text=True)
+        result = subprocess.run(['docker', 'stop', c], capture_output=True, text=True)
         if result.returncode == 0:
             log_info(f"[stop_container] {c} 컨테이너 중지함")
         else:
@@ -43,10 +43,18 @@ def stop_container(search_pattern: str) -> bool:
 
 def copy_template(service: str) -> bool:
     template_dir = f"{PROJECT_ROOT}/templates/{service}"
+    
+    # Extension Search
+    if not os.path.exists(template_dir):
+        # Search in apps/*/templates/{service}
+        candidates = list(Path(PROJECT_ROOT).joinpath("apps").glob(f"*/templates/{service}"))
+        if candidates:
+            template_dir = str(candidates[0])
+            
     service_dir = f"{BASE_DIR}/{service}"
 
     try:
-        subprocess.run(['sudo', 'mkdir', '-p', service_dir], check=True)
+        subprocess.run(['mkdir', '-p', service_dir], check=True)
 
         exclude_args = []
 
@@ -62,7 +70,7 @@ def copy_template(service: str) -> bool:
             ])
 
         dry_cmd = [
-            'sudo', 'rsync',
+            'rsync',
             '-a',       # Archive 모드 (권한/속성 등 유지)
             '-i',       # Itemize (변경 내역 상세 출력)
             '--no-t',   # Time: 수정 시간 변경은 무시 (실질적 내용 변경만 감지)
@@ -84,7 +92,7 @@ def copy_template(service: str) -> bool:
         log_debug(f"[copy_template] (dry-run 결과):\n{changed}")
 
         real_cmd = [
-            'sudo', 'rsync',
+            'rsync',
             '-a',       # Archive 모드
             '--no-t',   # Time 변경 무시
             '--no-o',   # Owner 변경 무시 (기존 권한 유지)
@@ -108,11 +116,11 @@ def copy_template(service: str) -> bool:
 
 def ensure_network():
     """ai4infra 네트워크 생성 - 극단적 간결 버전"""
-    cmd = ['sudo', 'docker', 'network', 'ls', '--filter', 'name=ai4infra', '--format', '{{.Name}}']
+    cmd = ['docker', 'network', 'ls', '--filter', 'name=ai4infra', '--format', '{{.Name}}']
     result = subprocess.run(cmd, capture_output=True, text=True)
     
     if 'ai4infra' not in result.stdout:
-        subprocess.run(['sudo', 'docker', 'network', 'create', 'ai4infra'])
+        subprocess.run(['docker', 'network', 'create', 'ai4infra'])
         log_info("[ensure_network] ai4infra 네트워크 생성됨")
     else:
         log_debug("[ensure_network] ai4infra 네트워크 이미 존재")
@@ -133,11 +141,11 @@ def start_container(service: str):
 
     ensure_network()
 
-    cmd = ['sudo', 'ls', '-l', compose_file]
+    cmd = ['ls', '-l', compose_file]
     result = subprocess.run(cmd, capture_output=True, text=True)
     log_debug(f"[start_container] 파일 권한: {result.stdout.strip()}")
 
-    cmd = ['sudo', 'docker', 'compose', 'up', '-d']
+    cmd = ['docker', 'compose', 'up', '-d']
     log_debug(f"[start_container] 실행 명령: {' '.join(cmd)} (Auto-merge overrides)")
     log_debug(f"[start_container] 작업 디렉터리: {service_dir}")
 

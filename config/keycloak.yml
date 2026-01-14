@@ -1,21 +1,17 @@
 service:
   enable: true
 
+path:
+  directories:
+    data: "${BASE_DIR}/keycloak/data"
+    certs: "${BASE_DIR}/keycloak/certs"
+
 env_vars:
-  # DB Info
-  KC_DB: postgres
+  KEYCLOAK_ADMIN: "admin"
+  KEYCLOAK_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD}" # injected from .env
+  KC_DB: "postgres"
   KC_DB_URL: "jdbc:postgresql://ai4infra-postgres:5432/keycloak"
-  KC_DB_USERNAME: keycloak
-  # Secrets injected from .env
-  KEYCLOAK_ADMIN: "${KEYCLOAK_ADMIN}"
-  KEYCLOAK_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD}"
-  KEYCLOAK_DB_PASSWORD: "${KEYCLOAK_DB_PASSWORD}"
-
-  # Hostname & Proxy
+  KC_DB_USERNAME: "keycloak"
+  KC_DB_PASSWORD: "${KEYCLOAK_DB_PASSWORD}" # injected from .env
   KC_HOSTNAME: "auth.ai4infra.internal"
-  KC_PROXY: "edge" # Nginx handles TLS
-  KC_HTTP_ENABLED: "true"
-
-compose_vars:
-  KEYCLOAK_PORT: "8080"
-  KEYCLOAK_MEM_LIMIT: "1g"
+  KEYCLOAK_PORT: "8484" # Host port mapping (avoid 8080 collision with Vaultwarden)

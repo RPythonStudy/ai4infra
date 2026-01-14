@@ -7,19 +7,16 @@ services:
       - "-c"
       - "ssl=on"
       - "-c"
-      - "ssl_cert_file=/var/lib/postgresql/data/server.crt"
+      - "ssl_cert_file=/var/lib/postgresql/data/certs/certificate.crt"
       - "-c"
-      - "ssl_key_file=/var/lib/postgresql/data/server.key"
+      - "ssl_key_file=/var/lib/postgresql/data/certs/private.key"
       - "-c"
-      - "ssl_ca_file=/var/lib/postgresql/data/rootCA.crt"
+      - "ssl_ca_file=/var/lib/postgresql/data/certs/rootCA.crt"
 
     volumes:
       # PostgreSQL 데이터 디렉터리
       - /opt/ai4infra/postgres/data:/var/lib/postgresql/data
-
-      # TLS 인증서 3종을 PostgreSQL이 찾는 정확한 경로로 마운트
-      - /opt/ai4infra/postgres/certs/certificate.crt:/var/lib/postgresql/data/server.crt:ro
-      - /opt/ai4infra/postgres/certs/private.key:/var/lib/postgresql/data/server.key:ro
-      - /opt/ai4infra/postgres/certs/rootCA.crt:/var/lib/postgresql/data/rootCA.crt:ro
-
-
+      # TLS 인증서: bind mount 제외 (docker cp로 주입 및 chown 수행)
+      # - /opt/ai4infra/postgres/certs/certificate.crt:/var/lib/postgresql/certs/server.crt:ro
+      # - /opt/ai4infra/postgres/certs/private.key:/var/lib/postgresql/certs/server.key:ro
+      # - /opt/ai4infra/postgres/certs/rootCA.crt:/var/lib/postgresql/certs/rootCA.crt:ro

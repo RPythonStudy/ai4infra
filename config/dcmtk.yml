@@ -1,7 +1,8 @@
 service:
-  enable: true
+  enable: ${DCMTK_ENABLED}
   description: "DCMTK DICOM Tools Container"
 
 # Docker Compose Variables
 compose_vars:
+  DCMTK_VERSION: "3.6.7"
   WORKSPACE_PATH: "./workspace"  # 응용 서비스 스크립트 마운트 경로

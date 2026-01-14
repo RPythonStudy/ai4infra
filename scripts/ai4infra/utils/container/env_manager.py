@@ -42,8 +42,17 @@ def extract_env_vars(env_path: str, section: str) -> dict:
     return env_vars
 
 def extract_config_vars(service: str) -> dict:
-    """./config/{service}.yml 읽고 ${PROJECT_ROOT}, ${BASE_DIR} 치환"""
+    """./config/{service}.yml 또는 apps/*/config/{service}.yml 읽고 변수 치환"""
+    # 1. Default Path
     config_path = Path(f"./config/{service}.yml")
+    
+    # 2. Extension Path Search (if not in default)
+    if not config_path.exists():
+        # Search in apps/*/config/{service}.yml
+        candidates = list(Path("apps").glob(f"*/config/{service}.yml"))
+        if candidates:
+            config_path = candidates[0] # Pick first match
+    
     if not config_path.exists():
         log_info(f"[extract_config_vars] 해당서비스명.yml 파일 없음: {config_path}")
         return {}
@@ -83,8 +92,12 @@ def generate_env(service: str) -> str:
     container_env = config.get("env_vars", {})
     if not isinstance(container_env, dict): container_env = {}
 
+    # entry_vars: 스크립트(Entrypoint)에서 사용할 변수 (예: ORTHANC_ADMIN_PASSWORD)
+    entry_vars = config.get("entry_vars", {})
+    if not isinstance(entry_vars, dict): entry_vars = {}
+
     # 병합 (순서 중요: 뒤에 오는 것이 덮어씀)
-    merged = {**base_env, **compose_vars, **container_env}
+    merged = {**base_env, **compose_vars, **container_env, **entry_vars}
 
     # 2) 필수 경로 변수 자동 주입 (System Standard)
     # YAML의 path 설정과 관계없이 표준 경로를 강제하여 복잡도 제거
@@ -115,17 +128,15 @@ def generate_env(service: str) -> str:
     # 6) 파일 이동 및 권한
     try:
         subprocess.run(
-            ["sudo", "mv", tmp_path, str(output_file)],
+            ["mv", tmp_path, str(output_file)],
             check=True, capture_output=True, text=True
         )
 
-        owner = "root"
+        owner = os.getenv("USER", "unknown")
+        # subprocess.run(["chown", root...]) -> Skip (User owned)
+        
         subprocess.run(
-            ["sudo", "chown", f"{owner}:{owner}", str(output_file)],
-            check=True, capture_output=True, text=True
-        )
-        subprocess.run(
-            ["sudo", "chmod", "600", str(output_file)],
+            ["chmod", "600", str(output_file)],
             check=True, capture_output=True, text=True
         )
 

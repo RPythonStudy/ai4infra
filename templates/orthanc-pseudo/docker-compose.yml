@@ -3,24 +3,24 @@ services:
     image: jodogne/orthanc-plugins:1.12.1
     container_name: ai4infra-orthanc-pseudo
     restart: unless-stopped
-    env_file: [.env]
-    
-    entrypoint: ["/bin/bash", "/docker-entrypoint.sh"]
+    env_file: [ .env ]
 
+    command: [ "/etc/orthanc/orthanc.json" ]
 
     # Storage for raw DICOM files
     volumes:
       - ./orthanc.json:/etc/orthanc/orthanc.json:ro
-      - ./entrypoint.sh:/docker-entrypoint.sh:ro
       - ./data:/var/lib/orthanc/db
 
     mem_limit: ${ORTHANC_MEM_LIMIT:-1g}
-    
+
     ports:
       # DICOM Protocol (C-STORE, C-FIND, etc.)
       # Must be exposed to receive images from modalities
       - "${ORTHANC_DICOM_PORT:-4242}:4242"
-    
+      # HTTP Web Interface
+      - "${ORTHANC_HTTP_PORT:-8042}:8042"
+
     networks:
       - ai4infra
 

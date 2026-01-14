@@ -2,23 +2,35 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:23.0.0
     container_name: ai4infra-keycloak
-    restart: unless-stopped
-    env_file: [.env]
-    command: start --http-enabled=true --proxy=edge --import-realm
+    hostname: keycloak
     environment:
-      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN}
-      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD}
-      - KC_DB_PASSWORD=${KEYCLOAK_DB_PASSWORD}
-      # Other envs injected from config/keycloak.yml
-    
-    mem_limit: ${KEYCLOAK_MEM_LIMIT:-1g}
-    
-    # Nginx Proxy only
-    # ports:
-    #   - "${KEYCLOAK_PORT:-8080}:8080"
-    
+      KEYCLOAK_ADMIN: "${KEYCLOAK_ADMIN}"
+      KEYCLOAK_ADMIN_PASSWORD: "${KEYCLOAK_ADMIN_PASSWORD}"
+      KC_DB: "${KC_DB}"
+      KC_DB_URL: "${KC_DB_URL}"
+      KC_DB_USERNAME: "${KC_DB_USERNAME}"
+      KC_DB_PASSWORD: "${KC_DB_PASSWORD}"
+      KC_HOSTNAME: "${KC_HOSTNAME}"
+      KC_PROXY: "edge" # Nginx handles TLS
+    command: start-dev # Use start-dev for easier setup initially, switch to start in prod
+    volumes:
+      - ./data:/opt/keycloak/data/import
+    ports:
+      - "${KEYCLOAK_PORT:-8080}:8080"
     networks:
       - ai4infra
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  # Placeholder for database dependency reference
+  postgres:
+    image: alpine
+    container_name: ai4infra-keycloak-db-check
+    command: echo "Checking DB dependency..."
+    networks:
+      - ai4infra
+    restart: "no"
 
 networks:
   ai4infra:

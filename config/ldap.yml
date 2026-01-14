@@ -1,29 +1,13 @@
 service:
   enable: true
 
-# Convention: Data path is hardcoded in docker-compose.yml (/opt/ai4infra/ldap/data)
-
-backup:
-  schedule: "0 4 * * *" # Daily 04:00
-  retention_days: 30
+path:
+  directories:
+    data: "${BASE_DIR}/ldap/data"
+    config: "${BASE_DIR}/ldap/config"
+    certs: "${BASE_DIR}/ldap/certs"
 
 env_vars:
-  # Organization Info
-  LDAP_ORGANISATION: "AI4INFRA"
+  LDAP_ORGANISATION: "AI4Infra Hospital"
   LDAP_DOMAIN: "ai4infra.internal"
-  
-  # Security (Initial Admin Password)
-  # .env 파일 생성 시 자동 주입되거나 사용자가 직접 수정해야 함.
-  # 여기서는 기본값을 비워두거나 참조만 함.
-  
-  # Config password (cn=config 수정용)
-  # LDAP_CONFIG_PASSWORD: "config"
-
-compose_vars:
-  # Resources
-  LDAP_MEM_LIMIT: "256m"
-  ADMIN_MEM_LIMIT: "128m"
-  
-  # Ports (Host Binding)
-  LDAP_PORT: "389"
-  LDAPS_PORT: "636"
+  LDAP_ADMIN_PASSWORD: "${LDAP_ADMIN_PASSWORD}" # injected from .env

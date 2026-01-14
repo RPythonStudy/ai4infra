@@ -15,7 +15,7 @@ def check_postgres(service: str) -> bool:
     # ========================================
     for attempt in range(60):
         ps = subprocess.run(
-            f"sudo docker ps --filter name={container} --format '{{{{.Status}}}}'",
+            f"docker ps --filter name={container} --format '{{{{.Status}}}}'",
             shell=True, text=True, capture_output=True
         )
         status = ps.stdout.strip().lower()
@@ -38,7 +38,7 @@ def check_postgres(service: str) -> bool:
     # 2) SELECT 1 확인
     # ========================================
     result = subprocess.run(
-        f"sudo docker exec {container} psql -U postgres -c 'SELECT 1;'",
+        f"docker exec {container} psql -U postgres -c 'SELECT 1;'",
         shell=True, text=True, capture_output=True
     )
     if "1 row" in result.stdout:
@@ -52,7 +52,7 @@ def check_postgres(service: str) -> bool:
     log_info("[check_postgres] TLS 설정 점검 시작")
 
     tls_status = subprocess.run(
-        f"sudo docker exec {container} psql -U postgres -t -c \"SHOW ssl;\"",
+        f"docker exec {container} psql -U postgres -t -c \"SHOW ssl;\"",
         shell=True, text=True, capture_output=True
     )
     ssl_value = tls_status.stdout.strip().lower()
@@ -87,7 +87,7 @@ def check_postgres_tls_diagnostics(container: str, tls_must_be_on: bool=False) -
     # ② 설정파일 내부에서 SSL 항목 확인
     # ---------------------------
     grep_ssl = subprocess.run(
-        f"sudo docker exec {container} grep -iE '^[ ]*ssl' {cfg}",
+        f"docker exec {container} grep -iE '^[ ]*ssl' {cfg}",
         shell=True, text=True, capture_output=True
     )
 

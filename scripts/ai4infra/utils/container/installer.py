@@ -5,29 +5,57 @@ from pathlib import Path
 import yaml
 
 from common.logger import log_debug, log_error
+from common.substitute import substitute_env
 
 
 def discover_services(config_dir="config") -> list:
     """
-    config/*.yml 파일을 스캔하여 service.enable==true 인 서비스만 반환한다.
+    config/*.yml 및 apps/*/config/*.yml 파일을 스캔하여 
+    service.enable==true 인 서비스만 반환한다.
     """
     services = []
-    config_path = Path(config_dir)
+    
+    # 1. Main Configs
+    root_path = Path(config_dir).resolve().parent # assuming config_dir is 'config' or absolute
+    if not root_path.name: # if config_dir is relative 'config'
+        root_path = Path(".").resolve()
 
-    for yml_file in config_path.glob("*.yml"):
+    main_config_path = Path(config_dir)
+    extension_pattern = "apps/*/config/*.yml"
+    
+    # Gather all candidate files
+    candidates = list(main_config_path.glob("*.yml"))
+    candidates.extend(root_path.glob(extension_pattern))
+
+    seen_services = set()    
+
+    for yml_file in candidates:
         name = yml_file.stem  # ex: postgres.yml → postgres
-
+        
+        if name in seen_services:
+            continue
+        
         try:
             cfg = yaml.safe_load(yml_file.read_text(encoding="utf-8")) or {}
+            # Apply env substitution (so ${ENABLE_VAR} works)
+            cfg = substitute_env(cfg)
         except Exception as e:
-            log_error(f"[discover_services] YAML 파싱 실패: {yml_file} ({e})")
+            log_error(f"[discover_services] YAML 파싱/치환 실패: {yml_file} ({e})")
             continue
 
         service_cfg = cfg.get("service", {})
-        enabled = service_cfg.get("enable", False)
+        enabled_val = service_cfg.get("enable", False)
+
+        # Handle boolean or string boolean ("true"/"false")
+        if isinstance(enabled_val, str):
+            enabled = enabled_val.lower() == "true"
+        else:
+            enabled = bool(enabled_val)
 
         if enabled:
             services.append(name)
+            seen_services.add(name)
+        else:
             log_debug(f"[discover_services] enable=false → {name}")
 
     return services

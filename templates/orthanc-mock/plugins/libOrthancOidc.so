@@ -1,0 +1,254 @@
+<!-- Template: https://purecss.io/layouts/blog/ -->
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Downloads that are available from the Orthanc project.">
+    <title>Orthanc downloads</title>
+    <link rel="stylesheet" href="../static/pure-min.css">
+    <link rel="stylesheet" href="../static/grids-responsive-min.css">
+    <link rel="stylesheet" href="../static/styles.css">
+  </head>
+  <body>
+
+    <div id="layout" class="pure-g">
+      <div class="sidebar pure-u-1 pure-u-md-1-4">
+        <div class="header">
+          <h1 class="brand-title">
+            <img src="../static/orthanc-negative.png" style="max-width:100%;width:300px">
+          </h1>
+          <h2 class="brand-tagline">
+            Free and open-source ecosystem for medical imaging.
+          </h2>
+
+          <nav class="nav">
+            <ul class="nav-list">
+              <li class="nav-item">
+                <a class="pure-button" href="https://www.orthanc-server.com/">Homepage</a>
+              </li>
+            </ul>
+          </nav>
+        </div>
+      </div>
+
+      <div class="content pure-u-1 pure-u-md-3-4">
+        <div>
+
+          <div class="posts">
+            <section class="post">
+              <header class="post-header">
+                <h2 class="post-title">Downloads</h2>
+              </header>
+
+              <div class="post-description">
+                <p>
+                  Browse all the downloads that are available for
+                  Orthanc, including official releases and precompiled
+                  plugins.
+                </p>
+                <p>
+                  <b>Current folder</b>: <tt>linux-standard-base</tt>
+                </p>
+              </div>
+
+              <table class="pure-table stretch">
+                <thead>
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Date</th>
+                    <th scope="col">Size</th>
+                    <th scope="col">Downloads</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><a href="../index.html">../</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc/index.html">orthanc/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-advanced-storage/index.html">orthanc-advanced-storage/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-authorization/index.html">orthanc-authorization/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-aws-s3/index.html">orthanc-aws-s3/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-dicomweb/index.html">orthanc-dicomweb/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-education/index.html">orthanc-education/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-explorer-2/index.html">orthanc-explorer-2/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-gcp/index.html">orthanc-gcp/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-gdcm/index.html">orthanc-gdcm/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-indexer/index.html">orthanc-indexer/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-mysql/index.html">orthanc-mysql/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-neuro/index.html">orthanc-neuro/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-odbc/index.html">orthanc-odbc/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-ohif/index.html">orthanc-ohif/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-pixels-masker/index.html">orthanc-pixels-masker/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-postgresql/index.html">orthanc-postgresql/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-python/index.html">orthanc-python/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-stl/index.html">orthanc-stl/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-tcia/index.html">orthanc-tcia/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-transfers/index.html">orthanc-transfers/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-volview/index.html">orthanc-volview/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-webviewer/index.html">orthanc-webviewer/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-worklists/index.html">orthanc-worklists/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="orthanc-wsi/index.html">orthanc-wsi/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="osimis-web-viewer/index.html">osimis-web-viewer/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="stone-rt-sample/index.html">stone-rt-sample/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                  <tr>
+                    <td><a href="stone-web-viewer/index.html">stone-web-viewer/</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                  </tr>
+                </tbody>
+              </table>
+              
+            </section>
+          </div>
+          
+          <div class="footer">
+            <div class="pure-menu pure-menu-horizontal">
+              <div class="post-description">
+                <p>
+                  &copy; 2012-2025, The Orthanc project.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </body>
+</html>

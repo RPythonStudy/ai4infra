@@ -1,0 +1,7 @@
+service:
+  enable: ${REDIS_ENABLED}
+  description: "Redis In-Memory Database for Message Broker"
+
+# Docker Compose Variables
+compose_vars:
+  REDIS_PORT: "6379"

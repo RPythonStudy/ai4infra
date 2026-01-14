@@ -36,7 +36,7 @@ import yaml
 from dotenv import load_dotenv
 from common.logger import log_info, log_warn, log_error
 from common.load_config import load_config
-from common.sudo_helpers import sudo_exists, sudo_find_files
+from common.load_config import load_config
 
 load_dotenv()
 PROJECT_ROOT = os.getenv("PROJECT_ROOT")
@@ -52,18 +52,17 @@ def create_root_ca(overwrite: bool = False) -> bool:
             log_info(f"[create_root_ca] Root CA 이미 존재: {CA_CERT}")
             return True
 
-        subprocess.run(["sudo", "mkdir", "-p", str(CA_DIR)], check=True)
+        subprocess.run(["mkdir", "-p", str(CA_DIR)], check=True)
 
         log_info("[create_root_ca] Root CA private key 생성 중...")
         subprocess.run(
-            ["sudo", "openssl", "genrsa", "-out", str(CA_KEY), "4096"],
+            ["openssl", "genrsa", "-out", str(CA_KEY), "4096"],
             check=True,
         )
 
         log_info("[create_root_ca] Root CA self-signed 인증서 생성 중...")
         subprocess.run(
             [
-                "sudo",
                 "openssl",
                 "req",
                 "-x509",
@@ -158,10 +157,10 @@ def create_service_key(service: str, key_path: Path) -> bool:
     """
     try:
         key_dir = key_path.parent
-        subprocess.run(["sudo", "mkdir", "-p", str(key_dir)], check=True)
+        subprocess.run(["mkdir", "-p", str(key_dir)], check=True)
 
         subprocess.run(
-            ["sudo", "openssl", "genrsa", "-out", str(key_path), "4096"],
+            ["openssl", "genrsa", "-out", str(key_path), "4096"],
             check=True,
         )
         log_info(f"[create_service_key] {service} key 생성 완료: {key_path}")
@@ -180,7 +179,6 @@ def create_service_csr(service: str, key_path: Path, csr_path: Path) -> bool:
     try:
         subprocess.run(
             [
-                "sudo",
                 "openssl",
                 "req",
                 "-new",
@@ -212,7 +210,7 @@ def sign_service_cert_with_ca(
     """
     try:
         cert_dir = cert_path.parent
-        subprocess.run(["sudo", "mkdir", "-p", str(cert_dir)], check=True)
+        subprocess.run(["mkdir", "-p", str(cert_dir)], check=True)
 
         with NamedTemporaryFile("w", delete=False, suffix=".cnf") as tmp:
             tmp_path = Path(tmp.name)
@@ -229,7 +227,6 @@ def sign_service_cert_with_ca(
 
         subprocess.run(
             [
-                "sudo",
                 "openssl",
                 "x509",
                 "-req",
@@ -270,7 +267,6 @@ def verify_service_cert(service: str, cert_path: Path) -> bool:
     try:
         result = subprocess.run(
             [
-                "sudo",  # Permission denied 방지
                 "openssl",
                 "verify",
                 "-CAfile",
@@ -297,11 +293,11 @@ def deploy_root_ca_to_service(service: str, ca_src: Path) -> bool:
     """
     try:
         cert_dir = Path(BASE_DIR) / service / "certs"
-        subprocess.run(["sudo", "mkdir", "-p", str(cert_dir)], check=True)
+        subprocess.run(["mkdir", "-p", str(cert_dir)], check=True)
         dst = cert_dir / "rootCA.crt"
 
         subprocess.run(
-            ["sudo", "cp", "-a", str(ca_src), str(dst)],
+            ["cp", "-a", str(ca_src), str(dst)],
             check=True,
         )
         log_info(f"[deploy_root_ca_to_service] Root CA 복사 완료: {dst}")
@@ -353,8 +349,8 @@ def create_service_certificate(service: str, san: str | None = None) -> bool:
         csr_path = paths["csr"]
         cert_path = paths["crt"]
 
-        # 2) 이미 key + cert 존재하면 skip (sudo로 확인)
-        if sudo_exists(key_path) and sudo_exists(cert_path):
+        # 2) 이미 key + cert 존재하면 skip
+        if os.path.exists(key_path) and os.path.exists(cert_path):
             deploy_root_ca_to_service(service, CA_CERT)
             return True
 
@@ -402,6 +398,7 @@ def apply_service_permissions(service: str) -> bool:
         service_ownership = {
             "postgres": (70, 70),
             "elk": (1000, 0),  # Elasticsearch (UID 1000)
+            "slicer": (1000, 1000), # 3D Slicer User (UID 1000)
             # "vaultwarden": (1000, 1000),  # 필요시 활성화
             # "nginx": (101, 101),          # 필요시 활성화
         }
@@ -425,38 +422,49 @@ def apply_service_permissions(service: str) -> bool:
         data_dir = Path(dirs.get("data", f"{service_dir}/data"))
         cert_dir = Path(dirs.get("certs", f"{service_dir}/certs"))
 
+        # [Auto-Create] Data 디렉터리가 없으면 생성 (Docker 자동 생성 시 root 소유 되는 문제 방지)
+        if not os.path.exists(data_dir):
+            subprocess.run(["mkdir", "-p", str(data_dir)], check=False)
+        
+        # [Special Case] ELK는 하위 데이터 폴더까지 미리 생성해야 함
+        if service == "elk":
+            for sub in ["elasticsearch", "logstash", "filebeat"]:
+                sub_path = data_dir / sub
+                if not os.path.exists(sub_path):
+                    subprocess.run(["mkdir", "-p", str(sub_path)], check=False)
+
         # 2) 서비스 루트 소유권 변경
         if service_dir.exists():
-            subprocess.run(["sudo", "chown", "-R", f"{uid}:{gid}", str(service_dir)], check=False)
+            subprocess.run(["chown", "-R", f"{uid}:{gid}", str(service_dir)], check=False)
             log_info(f"[apply_service_permissions] 소유권 변경 → {service_dir} ({uid}:{gid})")
 
         # 3) Data 디렉터리 권한 (700)
-        if sudo_exists(data_dir):
-            subprocess.run(["sudo", "chmod", "-R", mode_map["data"], str(data_dir)], check=False)
+        if os.path.exists(data_dir):
+            subprocess.run(["chmod", "-R", mode_map["data"], str(data_dir)], check=False)
             log_info(f"[apply_service_permissions] data 권한({mode_map['data']}) 적용 → {data_dir}")
 
         # 4) Cert 디렉터리 권한
-        if sudo_exists(cert_dir):
+        if os.path.exists(cert_dir):
             # Private Keys (600)
             key_patterns = ["*.key", "*key.pem", "*_key.pem"]
             key_paths = set()
             for pat in key_patterns:
-                for p in sudo_find_files(cert_dir, pat):
+                for p in Path(cert_dir).rglob(pat):
                     key_paths.add(p)
-                    subprocess.run(["sudo", "chmod", mode_map["key"], str(p)], check=False)
+                    subprocess.run(["chmod", mode_map["key"], str(p)], check=False)
             
             # Certificates (644) - anything ending in crt/pem excluding keys
             cert_patterns = ["*.crt", "*.pem"]
             for pat in cert_patterns:
-                for p in sudo_find_files(cert_dir, pat):
+                for p in Path(cert_dir).rglob(pat):
                     if p not in key_paths:
-                        subprocess.run(["sudo", "chmod", mode_map["cert"], str(p)], check=False)
+                        subprocess.run(["chmod", mode_map["cert"], str(p)], check=False)
 
             log_info(f"[apply_service_permissions] 인증서 파일 권한(Key:600, Cert:644) 정리 완료")
 
         # 5) 실행 스크립트 권한 (755)
-        for script in sudo_find_files(service_dir, "*.sh"):
-            subprocess.run(["sudo", "chmod", mode_map["script"], str(script)], check=False)
+        for script in Path(service_dir).rglob("*.sh"):
+            subprocess.run(["chmod", mode_map["script"], str(script)], check=False)
             log_info(f"[apply_service_permissions] 스크립트 권한(755) 적용 → {script}")
 
         log_info(f"[apply_service_permissions] {service} 권한 정리 완료")

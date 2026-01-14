@@ -15,6 +15,12 @@ services:
       - "ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms1g -Xmx1g}"
       - xpack.security.enabled=${ELASTIC_SECURITY_ENABLED:-false}
 
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
     ulimits:
       memlock:
         soft: -1
@@ -32,7 +38,7 @@ services:
       - /opt/ai4infra/elk/data/elasticsearch:/usr/share/elasticsearch/data
 
     healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1"]
+      test: [ "CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -42,7 +48,13 @@ services:
     image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-7.17.13}
     container_name: ai4infra-kibana
     restart: unless-stopped
-    
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
     environment:
       - SERVER_NAME=ai4infra-kibana
       - ELASTICSEARCH_HOSTS=http://ai4infra-elasticsearch:9200
@@ -66,6 +78,11 @@ services:
   logstash:
     image: docker.elastic.co/logstash/logstash:${ELASTIC_VERSION:-7.17.13}
     container_name: ai4infra-logstash
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "${LOGSTASH_PORT:-5044}:5044"
       - "5000:5000/tcp"
@@ -86,7 +103,13 @@ services:
     image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-7.17.13}
     container_name: ai4infra-filebeat
     user: root
-    command: ["--strict.perms=false"]
+    command: [ "--strict.perms=false" ]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
     volumes:
       - ./config/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro

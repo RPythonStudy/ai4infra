@@ -13,7 +13,7 @@ def check_container(service: str, custom_check=None) -> bool:
     # 최대 120초(초기화 대기)
     for attempt in range(120):
         ps = subprocess.run(
-            f"sudo docker ps --filter name={filter_name} --format '{{{{.Status}}}}'",
+            f"docker ps --filter name={filter_name} --format '{{{{.Status}}}}'",
             shell=True, text=True, capture_output=True
         )
         statuses = ps.stdout.strip().splitlines()
@@ -39,7 +39,7 @@ def check_container(service: str, custom_check=None) -> bool:
     # 로그 검사 (간결)
     # ----------------------------------------------------------------------
     logs = subprocess.run(
-        f"sudo docker logs {filter_name}",
+        f"docker logs {filter_name}",
         shell=True, text=True, capture_output=True
     )
     lowlog = logs.stdout.lower()
