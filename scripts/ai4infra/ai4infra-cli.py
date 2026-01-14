@@ -137,7 +137,28 @@ def install(
 ):
     
     # discover_services() 함수로 서비스 목록을 가져옴
-    services = list(discover_services()) if service == "all" else [service]
+    
+    # [Design Strategy] Core vs Add-on Separation
+    # Core services must be installed in strict dependency order.
+    # Add-ons can be installed afterwards.
+    CORE_ORDER = ["postgres", "vault", "ldap", "keycloak", "nginx"]
+    
+    if service == "all":
+        discovered = set(discover_services())
+        
+        # 1. Filter Core services present in discovery
+        core_to_install = [s for s in CORE_ORDER if s in discovered]
+        
+        # 2. Add-ons are everything else
+        addons_to_install = [s for s in discovered if s not in CORE_ORDER]
+        
+        # 3. Final ordered list
+        services = core_to_install + addons_to_install
+        
+        log_info(f"[install|all] Installation Order: {services}")
+    else:
+        services = [service]
+        
     for svc in services:
         service_dir = f"{BASE_DIR}/{svc}"
 

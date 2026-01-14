@@ -109,17 +109,7 @@ install-slicer:
 install-slicer--reset:
 	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install slicer --reset
 
-install-redis:
-	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install redis
 
-install-redis--reset:
-	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install redis --reset
-
-install-openrem:
-	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install openrem
-
-install-openrem--reset:
-	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install openrem --reset
 
 install-all:
 	$(PYTHON) scripts/ai4infra/ai4infra-cli.py install all
