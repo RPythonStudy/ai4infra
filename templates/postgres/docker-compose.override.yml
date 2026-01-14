@@ -14,9 +14,12 @@ services:
       - "ssl_ca_file=/var/lib/postgresql/data/certs/rootCA.crt"
 
     volumes:
-      # PostgreSQL 데이터 디렉터리
+      # PostgreSQL 데이터 디렉터리 (Override하지 않으면 docker-compose.yml의 설정이 유지되지만 명시적으로 적음)
       - /opt/ai4infra/postgres/data:/var/lib/postgresql/data
-      # TLS 인증서: bind mount 제외 (docker cp로 주입 및 chown 수행)
-      # - /opt/ai4infra/postgres/certs/certificate.crt:/var/lib/postgresql/certs/server.crt:ro
-      # - /opt/ai4infra/postgres/certs/private.key:/var/lib/postgresql/certs/server.key:ro
-      # - /opt/ai4infra/postgres/certs/rootCA.crt:/var/lib/postgresql/certs/rootCA.crt:ro
+
+      # [SEC-07] mTLS Enforcement Configs
+      - ./config/pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
+      - ./config/pg_ident.conf:/var/lib/postgresql/data/pg_ident.conf
+
+      # [SEC-07] Certs Mount (for ssl_cert_file, etc)
+      - ./certs:/var/lib/postgresql/data/certs
