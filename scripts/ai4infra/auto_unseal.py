@@ -8,9 +8,21 @@ from glob import glob
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+from dotenv import load_dotenv
+
 # --- Configuration ---
+# Load .env for consistent pathing
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+
 VAULT_ADDR = os.getenv("VAULT_ADDR", "https://127.0.0.1:8200") # Default to HTTPS
-USB_MOUNT_PATH = os.getenv("USB_MOUNT_PATH", "/mnt/usb")
+
+# Priority: USB_DIR (from .env) > USB_MOUNT_PATH (Legacy) > Default
+USB_MOUNT_PATH = os.getenv("USB_DIR") or os.getenv("USB_MOUNT_PATH", "/mnt/usb")
+# If it's a relative path (e.g. ./mock_usb), resolve it relative to PROJECT_ROOT
+if not os.path.isabs(USB_MOUNT_PATH):
+    USB_MOUNT_PATH = os.path.join(PROJECT_ROOT, USB_MOUNT_PATH)
+
 MAX_RETRIES = 5
 RETRY_DELAY = 2
 

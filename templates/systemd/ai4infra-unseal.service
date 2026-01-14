@@ -1,0 +1,16 @@
+[Unit]
+Description=AI4Infra Vault Auto Unseal Service
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/home/ben/projects/ai4infra
+Environment="PROJECT_ROOT=/home/ben/projects/ai4infra"
+Environment="BASE_DIR=/opt/ai4infra"
+ExecStart=/home/ben/projects/ai4infra/.venv/bin/python /home/ben/projects/ai4infra/scripts/ai4infra/ai4infra-cli.py unseal-vault
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

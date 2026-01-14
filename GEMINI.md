@@ -217,7 +217,11 @@ print() 대신 반드시 아래의 전용 로거를 사용합니다. 로그 폴�
 
 3.  **Auto-Unseal (Windows 공통)**:
     - `shell:startup` 폴더에 `auto_unseal.bat` 생성.
-    - 내용: `wsl -d Ubuntu -u ben /path/to/venv/python /path/to/ai4infra-cli.py unseal-vault`
+    - 내용: 
+      ```batch
+      @echo off
+      wsl -d Ubuntu -u ben /home/ben/projects/ai4infra/.venv/bin/python /home/ben/projects/ai4infra/scripts/ai4infra/auto_unseal.py
+      ```
 - **Restore Strategy**: `stop` -> `template check` -> `restore(overwrite)` -> `permission fix` -> `start`
 
 
