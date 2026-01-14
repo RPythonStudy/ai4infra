@@ -13,7 +13,7 @@ def test_auto_unseal_script_execution():
     """
     # Environment Setup for Test
     env = os.environ.copy()
-    env["USB_MOUNT_PATH"] = os.path.join(PROJECT_ROOT, "usb") # Point to local mock usb
+    env["USB_MOUNT_PATH"] = os.path.join(PROJECT_ROOT, "mock_usb") # Point to local mock usb
     env["VAULT_ADDR"] = "https://127.0.0.1:8200"
 
     try:
